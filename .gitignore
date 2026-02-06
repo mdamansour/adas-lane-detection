@@ -1,0 +1,27 @@
+# MATLAB Core
+*.asv
+*.m~
+*.autosave
+*.slxc
+slprj/
+codegen/
+*.mex*
+*.ctf
+
+# LaTeX Artifacts (Keep PDFs, clean logs)
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.toc
+*.synctex.gz
+
+# System
+Thumbs.db
+.DS_Store
+
+# AI Workspace (Keep Context Public, Drafts Private)
+.internal/
+!.internal/PROJECT_CONTEXT.md
+!.internal/AI_WORK_LOG.md
