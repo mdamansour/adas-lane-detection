@@ -38,7 +38,7 @@ P_W = houghpeaks(H_W, 2, 'threshold', 2);
 linesYellow = houghlines(roiYellow, theta_Y, rho_Y, P_Y, 'FillGap', 3000, 'MinLength', 20);
 linesWhite = houghlines(roiWhite, theta_W, rho_W, P_W, 'FillGap', 3000, 'MinLength', 20);
 
-%% Ego-lane selection (color-agnostic)
+%% Select ego-lane boundaries (color-agnostic)
 linesAll = [linesYellow, linesWhite];
 midX = imWidth / 2;
 leftLine = [];
@@ -70,35 +70,45 @@ for k = 1:length(linesAll)
     end
 end
 
-%% Line extrapolation
-figure('Name', 'Step 6: Line Extrapolation', 'Position', [100 100 1600 600]);
-imshow(frame);
+%% Extrapolate lines to top and bottom of ROI
+plotFrame = frame;
+figure('Name', 'Step 6: Line Extrapolation', 'Position', [100 100 1200 600]);
+imshow(plotFrame);
 hold on;
 
-if ~isempty(leftLine) && ~isempty(rightLine)
-    yTop = roiVertices(1,2);
-    yBottom = imHeight;
-
+if ~isempty(leftLine)
     p1 = leftLine.point1;
     p2 = leftLine.point2;
     mL = (p2(2) - p1(2)) / (p2(1) - p1(1));
     bL = p1(2) - mL * p1(1);
-    xLeftTop = (yTop - bL) / mL;
-    xLeftBottom = (yBottom - bL) / mL;
+end
 
+if ~isempty(rightLine)
     p1 = rightLine.point1;
     p2 = rightLine.point2;
     mR = (p2(2) - p1(2)) / (p2(1) - p1(1));
     bR = p1(2) - mR * p1(1);
+end
+
+yTop = round(imHeight * 0.60);
+yBottom = imHeight;
+
+if ~isempty(leftLine)
+    xLeftTop = (yTop - bL) / mL;
+    xLeftBottom = (yBottom - bL) / mL;
+    plot([xLeftTop, xLeftBottom], [yTop, yBottom], 'LineWidth', 6, 'Color', 'yellow');
+end
+
+if ~isempty(rightLine)
     xRightTop = (yTop - bR) / mR;
     xRightBottom = (yBottom - bR) / mR;
+    plot([xRightTop, xRightBottom], [yTop, yBottom], 'LineWidth', 6, 'Color', 'yellow');
+end
 
-    plot([xLeftTop, xLeftBottom], [yTop, yBottom], 'LineWidth', 8, 'Color', 'red');
-    plot([xRightTop, xRightBottom], [yTop, yBottom], 'LineWidth', 8, 'Color', 'red');
-
-    lanePolyX = [xLeftTop, xRightTop, xRightBottom, xLeftBottom];
-    lanePolyY = [yTop, yTop, yBottom, yBottom];
-    patch(lanePolyX, lanePolyY, 'green', 'FaceAlpha', 0.35, 'EdgeColor', 'none');
+if ~isempty(leftLine) && ~isempty(rightLine)
+    lanePolygon = [xLeftTop, yTop; xRightTop, yTop; xRightBottom, yBottom; xLeftBottom, yBottom];
+    patch('Faces', [1 2 3 4], 'Vertices', lanePolygon, 'FaceColor', 'green', 'EdgeColor', 'green', 'FaceAlpha', 0.3);
 end
 
 hold off;
+title('Extrapolated Lane Lines');
