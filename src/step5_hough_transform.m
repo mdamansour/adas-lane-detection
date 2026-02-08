@@ -42,6 +42,38 @@ P_W = houghpeaks(H_W, 2, 'threshold', 2);
 linesYellow = houghlines(roiYellow, theta_Y, rho_Y, P_Y, 'FillGap', 3000, 'MinLength', 20);
 linesWhite = houghlines(roiWhite, theta_W, rho_W, P_W, 'FillGap', 3000, 'MinLength', 20);
 
+%% Select ego-lane boundaries (color-agnostic)
+linesAll = [linesYellow, linesWhite];
+midX = imWidth / 2;
+leftLine = [];
+rightLine = [];
+leftBest = -inf;
+rightBest = inf;
+
+for k = 1:length(linesAll)
+    p1 = linesAll(k).point1;
+    p2 = linesAll(k).point2;
+    if p2(1) == p1(1)
+        continue;
+    end
+    slope = (p2(2) - p1(2)) / (p2(1) - p1(1));
+    if abs(slope) < 0.4
+        continue;
+    end
+    xBottom = p1(1) + (imHeight - p1(2)) / slope;
+    if xBottom < midX
+        if xBottom > leftBest
+            leftBest = xBottom;
+            leftLine = linesAll(k);
+        end
+    else
+        if xBottom < rightBest
+            rightBest = xBottom;
+            rightLine = linesAll(k);
+        end
+    end
+end
+
 %% Display results
 figure('Name', 'Step 5: Hough Transform', 'Position', [100 100 1600 900]);
 
@@ -49,12 +81,12 @@ figure('Name', 'Step 5: Hough Transform', 'Position', [100 100 1600 900]);
 subplot(2, 2, 1);
 imshow(frame);
 hold on;
-for k = 1:length(linesYellow)
-    xy = [linesYellow(k).point1; linesYellow(k).point2];
+if ~isempty(leftLine)
+    xy = [leftLine.point1; leftLine.point2];
     plot(xy(:,1), xy(:,2), 'LineWidth', 2, 'Color', 'yellow');
 end
-for k = 1:length(linesWhite)
-    xy = [linesWhite(k).point1; linesWhite(k).point2];
+if ~isempty(rightLine)
+    xy = [rightLine.point1; rightLine.point2];
     plot(xy(:,1), xy(:,2), 'LineWidth', 2, 'Color', 'green');
 end
 hold off;
@@ -67,7 +99,9 @@ xlabel('\theta (degrees)');
 ylabel('\rho');
 axis on; axis normal;
 hold on;
-plot(theta_Y(P_Y(:,2)), rho_Y(P_Y(:,1)), 's', 'color', 'red', 'MarkerSize', 10);
+if ~isempty(P_Y)
+    plot(theta_Y(P_Y(:,2)), rho_Y(P_Y(:,1)), 's', 'color', 'red', 'MarkerSize', 10);
+end
 hold off;
 title('Hough Space - Yellow Lane');
 
@@ -78,7 +112,9 @@ xlabel('\theta (degrees)');
 ylabel('\rho');
 axis on; axis normal;
 hold on;
-plot(theta_W(P_W(:,2)), rho_W(P_W(:,1)), 's', 'color', 'red', 'MarkerSize', 10);
+if ~isempty(P_W)
+    plot(theta_W(P_W(:,2)), rho_W(P_W(:,1)), 's', 'color', 'red', 'MarkerSize', 10);
+end
 hold off;
 title('Hough Space - White Lane');
 
@@ -86,14 +122,14 @@ title('Hough Space - White Lane');
 subplot(2, 2, 4);
 imshow(frame);
 hold on;
-for k = 1:length(linesYellow)
-    xy = [linesYellow(k).point1; linesYellow(k).point2];
+if ~isempty(leftLine)
+    xy = [leftLine.point1; leftLine.point2];
     plot(xy(:,1), xy(:,2), 'LineWidth', 3, 'Color', 'red');
     plot(xy(1,1), xy(1,2), 'x', 'LineWidth', 2, 'Color', 'yellow', 'MarkerSize', 10);
     plot(xy(2,1), xy(2,2), 'x', 'LineWidth', 2, 'Color', 'yellow', 'MarkerSize', 10);
 end
-for k = 1:length(linesWhite)
-    xy = [linesWhite(k).point1; linesWhite(k).point2];
+if ~isempty(rightLine)
+    xy = [rightLine.point1; rightLine.point2];
     plot(xy(:,1), xy(:,2), 'LineWidth', 3, 'Color', 'red');
     plot(xy(1,1), xy(1,2), 'x', 'LineWidth', 2, 'Color', 'cyan', 'MarkerSize', 10);
     plot(xy(2,1), xy(2,2), 'x', 'LineWidth', 2, 'Color', 'cyan', 'MarkerSize', 10);
