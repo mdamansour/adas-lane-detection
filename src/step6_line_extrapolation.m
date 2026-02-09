@@ -1,4 +1,4 @@
-    %% Clear workspace and command window
+%% Clear workspace and command window
 clear; clc; close all;
 
 %% Load and preprocess frame
@@ -43,7 +43,7 @@ P_W = houghpeaks(H_W, numPeaks, 'threshold', 2);
 linesYellow = houghlines(roiYellow, theta_Y, rho_Y, P_Y, 'FillGap', 3000, 'MinLength', 20);
 linesWhite = houghlines(roiWhite, theta_W, rho_W, P_W, 'FillGap', 3000, 'MinLength', 20);
 
-%% Collect Points for Curve Fitting (With Outlier Rejection)
+%% Collect Points for Curve Fitting (With Outlier Rejection and Weighting)
 linesAll = [linesYellow, linesWhite];
 midX = imWidth / 2;
 
@@ -72,18 +72,22 @@ for k = 1:length(linesAll)
     xBottom = p1(1) + (imHeight - p1(2)) / slope;
     
     % Reject lines that project too far sideways (e.g. adjacent lanes)
-    % Valid Ego Lane Range estimate: -200px to midX (Left) and midX to Width+200px (Right)
+    validLeft = (slope < 0) && (midX > p1(1)) && (xBottom > -200 && xBottom < midX);
+    validRight = (slope > 0) && (midX < p1(1)) && (xBottom > midX && xBottom < imWidth + 200);
     
-    if slope < 0 && midX > p1(1) % Left candidate
-        % Check if intercept is reasonable for ego lane
-        if xBottom > -200 && xBottom < midX
-             leftPoints = [leftPoints; p1; p2];
-        end
+    if validLeft || validRight
+        % WEIGHTING: Generate more points for longer lines to anchor the fit
+        lineLen = norm(p1 - p2);
+        numSamples = max(2, ceil(lineLen / 5)); % Sampling density: 1 point every 5px
         
-    elseif slope > 0 && midX < p1(1) % Right candidate
-        % Check if intercept is reasonable for ego lane
-        if xBottom > midX && xBottom < imWidth + 200
-             rightPoints = [rightPoints; p1; p2];
+        xSamp = linspace(p1(1), p2(1), numSamples)';
+        ySamp = linspace(p1(2), p2(2), numSamples)';
+        pts = [xSamp, ySamp];
+        
+        if validLeft
+            leftPoints = [leftPoints; pts];
+        else
+            rightPoints = [rightPoints; pts];
         end
     end
 end
@@ -152,24 +156,9 @@ if hasRight
 end
 
 %% Visualization
-figure('Name', 'Step 6: Curved Lane Fitting', 'Position', [100 100 1200 600]);
+figure('Name', 'Step 6: Evaluated & Improved', 'Position', [100 100 1200 600]);
 imshow(frame);
 hold on;
-
-% Draw raw segments (debug)
-for k = 1:length(linesAll)
-   p = linesAll(k);
-   % Identify if rejected or kept (simple check)
-   isKept = false;
-   if ~isempty(leftPoints) && ismember(p.point1, leftPoints, 'rows'), isKept = true; end
-   if ~isempty(rightPoints) && ismember(p.point1, rightPoints, 'rows'), isKept = true; end
-   
-   if isKept
-       plot([p.point1(1) p.point2(1)], [p.point1(2) p.point2(2)], 'LineWidth', 1, 'Color', 'yellow'); 
-   else
-       plot([p.point1(1) p.point2(1)], [p.point1(2) p.point2(2)], 'LineWidth', 1, 'Color', 'red', 'LineStyle', ':'); 
-   end
-end
 
 % Draw Polygon Patch
 if ~isempty(xLeftPred) && ~isempty(xRightPred)
@@ -181,12 +170,12 @@ if ~isempty(xLeftPred) && ~isempty(xRightPred)
     patch('Faces', 1:size(verts,1), 'Vertices', verts, ...
           'FaceColor', 'green', 'FaceAlpha', 0.4, 'EdgeColor', 'none');
           
-    plot(xLeftPred, yRange, 'LineWidth', 5, 'Color', 'red');
-    plot(xRightPred, yRange, 'LineWidth', 5, 'Color', 'red');
+    plot(xLeftPred, yRange, 'LineWidth', 5, 'Color', 'yellow');
+    plot(xRightPred, yRange, 'LineWidth', 5, 'Color', 'yellow');
     
     text(midX, 50, 'Curved Lane Detected', 'Color', 'green', 'FontSize', 14, ...
         'HorizontalAlignment', 'center', 'FontWeight', 'bold');
 end
 
 hold off;
-title('Curved Lane Extrapolation (Polynomial Fit + Intersection Clip)');
+title('Curved Lane Extrapolation (Weighted Polynomial Fit)');
