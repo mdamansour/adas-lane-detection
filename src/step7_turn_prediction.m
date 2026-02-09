@@ -30,21 +30,20 @@ roiMask = poly2mask(roiVertices(:,1), roiVertices(:,2), imHeight, imWidth);
 roiYellow = edgesYellow & roiMask;
 roiWhite = edgesWhite & roiMask;
 
-%% Hough Transform
+%% Hough Transform - Increased peaks for curve fitting
 [H_Y, theta_Y, rho_Y] = hough(roiYellow);
 [H_W, theta_W, rho_W] = hough(roiWhite);
-P_Y = houghpeaks(H_Y, 2, 'threshold', 2);
-P_W = houghpeaks(H_W, 2, 'threshold', 2);
+numPeaks = 10;
+P_Y = houghpeaks(H_Y, numPeaks, 'threshold', 2);
+P_W = houghpeaks(H_W, numPeaks, 'threshold', 2);
 linesYellow = houghlines(roiYellow, theta_Y, rho_Y, P_Y, 'FillGap', 3000, 'MinLength', 20);
 linesWhite = houghlines(roiWhite, theta_W, rho_W, P_W, 'FillGap', 3000, 'MinLength', 20);
 
-%% Select ego-lane boundaries (color-agnostic)
+%% Collect Points for Curve Fitting (With Outlier Rejection and Weighting)
 linesAll = [linesYellow, linesWhite];
 midX = imWidth / 2;
-leftLine = [];
-rightLine = [];
-leftBest = -inf;
-rightBest = inf;
+leftPoints = [];
+rightPoints = [];
 
 for k = 1:length(linesAll)
     p1 = linesAll(k).point1;
@@ -57,85 +56,116 @@ for k = 1:length(linesAll)
         continue;
     end
     xBottom = p1(1) + (imHeight - p1(2)) / slope;
-    if xBottom < midX
-        if xBottom > leftBest
-            leftBest = xBottom;
-            leftLine = linesAll(k);
-        end
-    else
-        if xBottom < rightBest
-            rightBest = xBottom;
-            rightLine = linesAll(k);
+    validLeft = (slope < 0) && (midX > p1(1)) && (xBottom > -200 && xBottom < midX);
+    validRight = (slope > 0) && (midX < p1(1)) && (xBottom > midX && xBottom < imWidth + 200);
+    if validLeft || validRight
+        lineLen = norm(p1 - p2);
+        numSamples = max(2, ceil(lineLen / 5));
+        xSamp = linspace(p1(1), p2(1), numSamples)';
+        ySamp = linspace(p1(2), p2(2), numSamples)';
+        pts = [xSamp, ySamp];
+        if validLeft
+            leftPoints = [leftPoints; pts];
+        else
+            rightPoints = [rightPoints; pts];
         end
     end
 end
 
-%% Line extrapolation
-if ~isempty(leftLine)
-    p1 = leftLine.point1;
-    p2 = leftLine.point2;
-    mL = (p2(2) - p1(2)) / (p2(1) - p1(1));
-    bL = p1(2) - mL * p1(1);
+%% Polynomial Fitting (Degree 2)
+polyParamsL = [];
+polyParamsR = [];
+hasLeft = false;
+hasRight = false;
+
+if size(leftPoints, 1) >= 3
+    polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 2);
+    hasLeft = true;
+elseif size(leftPoints, 1) >= 2
+    polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 1);
+    hasLeft = true;
 end
 
-if ~isempty(rightLine)
-    p1 = rightLine.point1;
-    p2 = rightLine.point2;
-    mR = (p2(2) - p1(2)) / (p2(1) - p1(1));
-    bR = p1(2) - mR * p1(1);
+if size(rightPoints, 1) >= 3
+    polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 2);
+    hasRight = true;
+elseif size(rightPoints, 1) >= 2
+    polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 1);
+    hasRight = true;
 end
 
-yTop = round(imHeight * 0.60);
-yBottom = imHeight;
+%% Vanishing Point (Curve Intersection)
+vanishingPoint = [];
+direction = 'Unknown';
 
-if ~isempty(leftLine)
-    xLeftTop = (yTop - bL) / mL;
-    xLeftBottom = (yBottom - bL) / mL;
-end
+if hasLeft && hasRight
+    pL = [0 0 0];
+    pR = [0 0 0];
+    if length(polyParamsL) == 3, pL = polyParamsL; else, pL = [0 polyParamsL]; end
+    if length(polyParamsR) == 3, pR = polyParamsR; else, pR = [0 polyParamsR]; end
 
-if ~isempty(rightLine)
-    xRightTop = (yTop - bR) / mR;
-    xRightBottom = (yBottom - bR) / mR;
-end
-
-%% Turn prediction using vanishing point
-if ~isempty(leftLine) && ~isempty(rightLine)
-    leftLineEq = cross([xLeftTop, yTop, 1], [xLeftBottom, yBottom, 1]);
-    rightLineEq = cross([xRightTop, yTop, 1], [xRightBottom, yBottom, 1]);
-    leftLineEq = leftLineEq / norm(leftLineEq(1:2));
-    rightLineEq = rightLineEq / norm(rightLineEq(1:2));
-
-    vanishingPoint = cross(leftLineEq, rightLineEq);
-    vanishingPoint = vanishingPoint / vanishingPoint(3);
-    vanishingRatio = vanishingPoint(1) / imWidth;
-
-    if vanishingRatio < 0.49
-        direction = 'Turn Left';
-    elseif vanishingRatio <= 0.51
-        direction = 'Go Straight';
-    else
-        direction = 'Turn Right';
+    coeffs = pL - pR;
+    rootsY = roots(coeffs);
+    validRoots = rootsY(imag(rootsY) == 0 & rootsY > 0 & rootsY < imHeight);
+    if ~isempty(validRoots)
+        yHorizon = 320;
+        nearHorizon = validRoots(validRoots <= yHorizon);
+        if ~isempty(nearHorizon)
+            yV = min(nearHorizon);
+        else
+            yV = min(validRoots);
+        end
+        xV = polyval(pL, yV);
+        vanishingPoint = [xV, yV];
+        vanishingRatio = xV / imWidth;
+        if vanishingRatio < 0.49
+            direction = 'Turn Left';
+        elseif vanishingRatio <= 0.51
+            direction = 'Go Straight';
+        else
+            direction = 'Turn Right';
+        end
     end
-else
-    direction = 'Unknown';
 end
 
-%% Display results
+%% Generate Curves for display
+xLeftPred = [];
+xRightPred = [];
+yTop = 320;
+
+if hasLeft && hasRight && ~isempty(vanishingPoint)
+    yTop = max(320, vanishingPoint(2));
+end
+
+yRange = linspace(imHeight, yTop, 50)';
+if hasLeft
+    xLeftPred = polyval(polyParamsL, yRange);
+end
+if hasRight
+    xRightPred = polyval(polyParamsR, yRange);
+end
+
+%% Visualization
 figure('Name', 'Step 7: Turn Prediction', 'Position', [100 100 1200 600]);
 imshow(frame);
 hold on;
 
-if ~isempty(leftLine)
-    plot([xLeftTop, xLeftBottom], [yTop, yBottom], 'LineWidth', 6, 'Color', 'yellow');
-end
-if ~isempty(rightLine)
-    plot([xRightTop, xRightBottom], [yTop, yBottom], 'LineWidth', 6, 'Color', 'yellow');
-end
-if ~isempty(leftLine) && ~isempty(rightLine)
-    lanePolygon = [xLeftTop, yTop; xRightTop, yTop; xRightBottom, yBottom; xLeftBottom, yBottom];
-    patch('Faces', [1 2 3 4], 'Vertices', lanePolygon, 'FaceColor', 'green', 'EdgeColor', 'green', 'FaceAlpha', 0.3);
+if ~isempty(xLeftPred) && ~isempty(xRightPred)
+    v1 = [xLeftPred, yRange];
+    v2 = [flipud(xRightPred), flipud(yRange)];
+    verts = [v1; v2];
+    patch('Faces', 1:size(verts,1), 'Vertices', verts, ...
+          'FaceColor', 'green', 'FaceAlpha', 0.4, 'EdgeColor', 'none');
+    plot(xLeftPred, yRange, 'LineWidth', 5, 'Color', 'yellow');
+    plot(xRightPred, yRange, 'LineWidth', 5, 'Color', 'yellow');
 end
 
-text(imWidth/2, 60, direction, 'HorizontalAlignment', 'center', 'Color', 'red', 'FontSize', 20, 'FontWeight', 'bold');
+if ~isempty(vanishingPoint)
+    plot(vanishingPoint(1), vanishingPoint(2), 'o', 'Color', 'red', 'MarkerSize', 8, 'LineWidth', 2);
+end
+
+text(midX, 50, direction, 'Color', 'red', 'FontSize', 18, ...
+    'HorizontalAlignment', 'center', 'FontWeight', 'bold');
+
 hold off;
-title('Turn Prediction');
+title('Turn Prediction (Vanishing Point from Curved Lanes)');
