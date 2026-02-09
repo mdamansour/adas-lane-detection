@@ -16,6 +16,14 @@ fprintf('Output: %s\n', outputPath);
 frameCount = 0;
 startTime = tic;
 
+%% Temporal Smoothing State (Persistence)
+avgPolyL = [];
+avgPolyR = [];
+alpha = 0.7; % Smoothing factor (0 = no memory, 1 = no update). 0.7 means 70% history, 30% new.
+lostL = 0;   % Counter for consecutive lost frames
+lostR = 0;
+MAX_LOST = 10; % Reset history after this many lost frames
+
 %% Frame loop
 while hasFrame(videoObj)
     frameCount = frameCount + 1;
@@ -87,39 +95,77 @@ while hasFrame(videoObj)
         end
     end
 
-    %% Polynomial fitting
-    polyParamsL = [];
-    polyParamsR = [];
-    hasLeft = false;
-    hasRight = false;
-
+    %% Polynomial fitting with Smoothing
+    currPolyL = [];
+    currPolyR = [];
+    
+    % --- Left Lane ---
     if size(leftPoints, 1) >= 3
-        polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 2);
-        hasLeft = true;
+        currPolyL = polyfit(leftPoints(:,2), leftPoints(:,1), 2);
     elseif size(leftPoints, 1) >= 2
-        polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 1);
-        hasLeft = true;
+        currPolyL = polyfit(leftPoints(:,2), leftPoints(:,1), 1);
+    end
+    
+    if ~isempty(currPolyL)
+        if isempty(avgPolyL)
+            avgPolyL = currPolyL; % First detection
+        else
+            % Pad if degree changed (rare, but handled)
+             if length(currPolyL) < length(avgPolyL), currPolyL = [0 currPolyL]; end
+             if length(avgPolyL) < length(currPolyL), avgPolyL = [0 avgPolyL]; end
+             
+             % Apply EMA smoothing
+             avgPolyL = alpha * avgPolyL + (1 - alpha) * currPolyL;
+        end
+        lostL = 0;
+    else
+        lostL = lostL + 1;
+        if lostL > MAX_LOST
+            avgPolyL = []; % Reset if lost for too long
+        end
     end
 
+    % --- Right Lane ---
     if size(rightPoints, 1) >= 3
-        polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 2);
-        hasRight = true;
+        currPolyR = polyfit(rightPoints(:,2), rightPoints(:,1), 2);
     elseif size(rightPoints, 1) >= 2
-        polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 1);
-        hasRight = true;
+        currPolyR = polyfit(rightPoints(:,2), rightPoints(:,1), 1);
+    end
+    
+    if ~isempty(currPolyR)
+        if isempty(avgPolyR)
+            avgPolyR = currPolyR; 
+        else
+             if length(currPolyR) < length(avgPolyR), currPolyR = [0 currPolyR]; end
+             if length(avgPolyR) < length(currPolyR), avgPolyR = [0 avgPolyR]; end
+             
+             avgPolyR = alpha * avgPolyR + (1 - alpha) * currPolyR;
+        end
+        lostR = 0;
+    else
+        lostR = lostR + 1;
+        if lostR > MAX_LOST
+            avgPolyR = [];
+        end
     end
 
-    %% Vanishing point and direction
+    %% Vanishing point and direction (Using Smoothed Polys)
     vanishingPoint = [];
     direction = 'Unknown';
+    hasLeft = ~isempty(avgPolyL);
+    hasRight = ~isempty(avgPolyR);
+    
     if hasLeft && hasRight
-        pL = [0 0 0];
-        pR = [0 0 0];
-        if length(polyParamsL) == 3, pL = polyParamsL; else, pL = [0 polyParamsL]; end
-        if length(polyParamsR) == 3, pR = polyParamsR; else, pR = [0 polyParamsR]; end
+        pL = avgPolyL;
+        pR = avgPolyR;
+        % Normalize length for subtraction
+        if length(pL) < 3, pL = [0 pL]; end
+        if length(pR) < 3, pR = [0 pR]; end
+        
         coeffs = pL - pR;
         rootsY = roots(coeffs);
         validRoots = rootsY(imag(rootsY) == 0 & rootsY > 0 & rootsY < imHeight);
+        
         if ~isempty(validRoots)
             yHorizon = 320;
             nearHorizon = validRoots(validRoots <= yHorizon);
@@ -129,14 +175,18 @@ while hasFrame(videoObj)
                 yV = min(validRoots);
             end
             xV = polyval(pL, yV);
-            vanishingPoint = [xV, yV];
-            vanishingRatio = xV / imWidth;
-            if vanishingRatio < 0.49
-                direction = 'Turn Left';
-            elseif vanishingRatio <= 0.51
-                direction = 'Go Straight';
-            else
-                direction = 'Turn Right';
+            
+            % Sanity check vanishing point location
+            if xV > 0 && xV < imWidth
+                 vanishingPoint = [xV, yV];
+                 vanishingRatio = xV / imWidth;
+                 if vanishingRatio < 0.49
+                    direction = 'Turn Left';
+                 elseif vanishingRatio <= 0.51
+                    direction = 'Go Straight';
+                 else
+                    direction = 'Turn Right';
+                 end
             end
         end
     end
@@ -149,21 +199,30 @@ while hasFrame(videoObj)
     yRange = linspace(imHeight, yTop, 50)';
     xLeftPred = [];
     xRightPred = [];
+    
+    % Generate from SMOOTHED parameters
     if hasLeft
-        xLeftPred = polyval(polyParamsL, yRange);
+        xLeftPred = polyval(avgPolyL, yRange);
     end
     if hasRight
-        xRightPred = polyval(polyParamsR, yRange);
+        xRightPred = polyval(avgPolyR, yRange);
     end
 
     %% Visualization overlay
     outputFrame = frame;
+    
     if ~isempty(xLeftPred) && ~isempty(xRightPred)
         v1 = [xLeftPred, yRange];
         v2 = [flipud(xRightPred), flipud(yRange)];
         verts = [v1; v2];
-        outputFrame = insertShape(outputFrame, 'FilledPolygon', verts(:)', ...
+        
+        % Ensure polygon does not self-intersect (simple X check)
+        % If xLeft is ever > xRight, we have a crossover problem
+        if all(xLeftPred < xRightPred)
+             outputFrame = insertShape(outputFrame, 'FilledPolygon', verts(:)', ...
             'Color', 'green', 'Opacity', 0.4);
+        end
+        
         outputFrame = insertShape(outputFrame, 'Line', [xLeftPred yRange], ...
             'Color', 'yellow', 'LineWidth', 5);
         outputFrame = insertShape(outputFrame, 'Line', [xRightPred yRange], ...
