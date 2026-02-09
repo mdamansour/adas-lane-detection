@@ -1,4 +1,4 @@
-%% Clear workspace and command window
+    %% Clear workspace and command window
 clear; clc; close all;
 
 %% Load and preprocess frame
@@ -43,7 +43,7 @@ P_W = houghpeaks(H_W, numPeaks, 'threshold', 2);
 linesYellow = houghlines(roiYellow, theta_Y, rho_Y, P_Y, 'FillGap', 3000, 'MinLength', 20);
 linesWhite = houghlines(roiWhite, theta_W, rho_W, P_W, 'FillGap', 3000, 'MinLength', 20);
 
-%% Collect Points for Curve Fitting
+%% Collect Points for Curve Fitting (With Outlier Rejection)
 linesAll = [linesYellow, linesWhite];
 midX = imWidth / 2;
 
@@ -62,49 +62,92 @@ for k = 1:length(linesAll)
     
     slope = (p2(2) - p1(2)) / (p2(1) - p1(1));
     
-    % Filter gentle slopes (noise)
+    % Filter gentle slopes (horizon lines)
     if abs(slope) < 0.4
         continue;
     end
     
-    % Classify based on location relative to center and meaningful slope direction
-    % We use the line midpoint to check side
-    midLineX = (p1(1) + p2(1)) / 2;
+    % Calculate bottom x-intercept
+    % x = (y - b) / m  => xBottom = p1(1) + (imHeight - p1(2)) / slope
+    xBottom = p1(1) + (imHeight - p1(2)) / slope;
     
-    if slope < -0.2 && midLineX < midX
-        % Candidate for Left Lane
-        leftPoints = [leftPoints; p1; p2];
-    elseif slope > 0.2 && midLineX > midX
-        % Candidate for Right Lane
-        rightPoints = [rightPoints; p1; p2];
+    % Reject lines that project too far sideways (e.g. adjacent lanes)
+    % Valid Ego Lane Range estimate: -200px to midX (Left) and midX to Width+200px (Right)
+    
+    if slope < 0 && midX > p1(1) % Left candidate
+        % Check if intercept is reasonable for ego lane
+        if xBottom > -200 && xBottom < midX
+             leftPoints = [leftPoints; p1; p2];
+        end
+        
+    elseif slope > 0 && midX < p1(1) % Right candidate
+        % Check if intercept is reasonable for ego lane
+        if xBottom > midX && xBottom < imWidth + 200
+             rightPoints = [rightPoints; p1; p2];
+        end
     end
 end
 
 %% Polynomial Fitting (Degree 2)
-% Define display range (from bottom to horizon)
-yRange = linspace(imHeight, 320, 100)'; % 100 points
-yRange = round(yRange);
+% Initialize polys (default to linear verticalish if empty)
+polyParamsL = [];
+polyParamsR = [];
+hasLeft = false;
+hasRight = false;
 
+if size(leftPoints, 1) >= 3
+    polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 2);
+    hasLeft = true;
+elseif size(leftPoints, 1) >= 2
+    polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 1);
+    hasLeft = true;
+end
+
+if size(rightPoints, 1) >= 3
+    polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 2);
+    hasRight = true;
+elseif size(rightPoints, 1) >= 2
+    polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 1);
+    hasRight = true;
+end
+
+%% Calculate Dynamic Top Boundary (Intersection of Lanes)
+yTop = 320; % Default horizon
+
+if hasLeft && hasRight
+    % Solve for intersection: aL*y^2 + bL*y + cL = aR*y^2 + bR*y + cR
+    % (aL-aR)*y^2 + (bL-bR)*y + (cL-cR) = 0
+    
+    pL = [0 0 0]; pR = [0 0 0];
+    if length(polyParamsL) == 3, pL = polyParamsL; else, pL = [0 polyParamsL]; end
+    if length(polyParamsR) == 3, pR = polyParamsR; else, pR = [0 polyParamsR]; end
+    
+    coeffs = pL - pR;
+    rootsY = roots(coeffs);
+    
+    % Find valid real intersection above bottom
+    validRoots = rootsY(imag(rootsY)==0 & rootsY < imHeight & rootsY > 0);
+    
+    if ~isempty(validRoots)
+        % Pick the lowest Y (highest on screen) that is valid or the max Y (closest to camera)
+        % Actually we want the point where they converge in distance (smallest Y > horizon limit)
+        intersectionY = max(validRoots); % Usually they cross at the vanishing point
+        yTop = max(320, intersectionY); % Don't go above hard limit
+    end
+end
+
+% Define generation range
+yRange = linspace(imHeight, yTop, 50)'; % Bottom to Intersection
+
+%% Generate Curves
 xLeftPred = [];
 xRightPred = [];
 
-% Fit Left
-if size(leftPoints, 1) >= 3
-    % Fit x = f(y) -> x = ay^2 + by + c
-    polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 2);
-    xLeftPred = polyval(polyParamsL, yRange);
-elseif size(leftPoints, 1) >= 2
-    % Fallback to linear if not enough points for curve
-    polyParamsL = polyfit(leftPoints(:,2), leftPoints(:,1), 1);
+if hasLeft
     xLeftPred = polyval(polyParamsL, yRange);
 end
 
-% Fit Right
-if size(rightPoints, 1) >= 3
-    polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 2);
-    xRightPred = polyval(polyParamsR, yRange);
-elseif size(rightPoints, 1) >= 2
-    polyParamsR = polyfit(rightPoints(:,2), rightPoints(:,1), 1);
+if hasRight
     xRightPred = polyval(polyParamsR, yRange);
 end
 
@@ -113,42 +156,37 @@ figure('Name', 'Step 6: Curved Lane Fitting', 'Position', [100 100 1200 600]);
 imshow(frame);
 hold on;
 
-% Draw detected hough segments (thin, for reference)
+% Draw raw segments (debug)
 for k = 1:length(linesAll)
-   xy = [linesAll(k).point1; linesAll(k).point2];
-   plot(xy(:,1), xy(:,2), 'LineWidth', 1, 'Color', 'yellow', 'LineStyle', ':'); 
+   p = linesAll(k);
+   % Identify if rejected or kept (simple check)
+   isKept = false;
+   if ~isempty(leftPoints) && ismember(p.point1, leftPoints, 'rows'), isKept = true; end
+   if ~isempty(rightPoints) && ismember(p.point1, rightPoints, 'rows'), isKept = true; end
+   
+   if isKept
+       plot([p.point1(1) p.point2(1)], [p.point1(2) p.point2(2)], 'LineWidth', 1, 'Color', 'yellow'); 
+   else
+       plot([p.point1(1) p.point2(1)], [p.point1(2) p.point2(2)], 'LineWidth', 1, 'Color', 'red', 'LineStyle', ':'); 
+   end
 end
 
-% Draw Polygon Patch if both lanes detected
+% Draw Polygon Patch
 if ~isempty(xLeftPred) && ~isempty(xRightPred)
-    % Construct polygon vertices
-    % Order: Left Bottom -> Left Top -> Right Top -> Right Bottom
-    
-    % Vertices must be sorted to form a closed loop without crossing
-    % xLeftPred corresponds to yRange (Bottom to Top)
-    % xRightPred corresponds to yRange (Bottom to Top)
-    
-    % Polygon: Left Lane Bottom-Up -> Right Lane Top-Down
-    v1 = [xLeftPred, yRange];                  % Left: Bottom -> Top
-    v2 = [flipud(xRightPred), flipud(yRange)]; % Right: Top -> Bottom
-    
+    % Vertices: Left(Bottom->Top) -> Right(Top->Bottom)
+    v1 = [xLeftPred, yRange];
+    v2 = [flipud(xRightPred), flipud(yRange)];
     verts = [v1; v2];
     
-    % Draw boundary lines
+    patch('Faces', 1:size(verts,1), 'Vertices', verts, ...
+          'FaceColor', 'green', 'FaceAlpha', 0.4, 'EdgeColor', 'none');
+          
     plot(xLeftPred, yRange, 'LineWidth', 5, 'Color', 'red');
     plot(xRightPred, yRange, 'LineWidth', 5, 'Color', 'red');
     
-    % Draw green transparent patch
-    patch('Faces', 1:size(verts,1), 'Vertices', verts, ...
-          'FaceColor', 'green', 'FaceAlpha', 0.4, 'EdgeColor', 'none');
-      
     text(midX, 50, 'Curved Lane Detected', 'Color', 'green', 'FontSize', 14, ...
         'HorizontalAlignment', 'center', 'FontWeight', 'bold');
-elseif ~isempty(xLeftPred)
-     plot(xLeftPred, yRange, 'LineWidth', 5, 'Color', 'red');
-elseif ~isempty(xRightPred)
-     plot(xRightPred, yRange, 'LineWidth', 5, 'Color', 'red');
 end
 
 hold off;
-title('Curved Lane Extrapolation (Polynomial Fit)');
+title('Curved Lane Extrapolation (Polynomial Fit + Intersection Clip)');
