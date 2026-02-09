@@ -19,10 +19,10 @@ startTime = tic;
 %% Temporal Smoothing State (Persistence)
 avgPolyL = [];
 avgPolyR = [];
-alpha = 0.7; % Smoothing factor (0 = no memory, 1 = no update). 0.7 means 70% history, 30% new.
-lostL = 0;   % Counter for consecutive lost frames
+alpha = 0.6; % Slightly faster adaptation (60% history, 40% new)
+lostL = 0;   
 lostR = 0;
-MAX_LOST = 10; % Reset history after this many lost frames
+MAX_LOST = 10; 
 
 %% Frame loop
 while hasFrame(videoObj)
@@ -110,7 +110,6 @@ while hasFrame(videoObj)
         if isempty(avgPolyL)
             avgPolyL = currPolyL; % First detection
         else
-            % Pad if degree changed (rare, but handled)
              if length(currPolyL) < length(avgPolyL), currPolyL = [0 currPolyL]; end
              if length(avgPolyL) < length(currPolyL), avgPolyL = [0 avgPolyL]; end
              
@@ -158,7 +157,6 @@ while hasFrame(videoObj)
     if hasLeft && hasRight
         pL = avgPolyL;
         pR = avgPolyR;
-        % Normalize length for subtraction
         if length(pL) < 3, pL = [0 pL]; end
         if length(pR) < 3, pR = [0 pR]; end
         
@@ -176,7 +174,6 @@ while hasFrame(videoObj)
             end
             xV = polyval(pL, yV);
             
-            % Sanity check vanishing point location
             if xV > 0 && xV < imWidth
                  vanishingPoint = [xV, yV];
                  vanishingRatio = xV / imWidth;
@@ -200,7 +197,6 @@ while hasFrame(videoObj)
     xLeftPred = [];
     xRightPred = [];
     
-    % Generate from SMOOTHED parameters
     if hasLeft
         xLeftPred = polyval(avgPolyL, yRange);
     end
@@ -216,11 +212,14 @@ while hasFrame(videoObj)
         v2 = [flipud(xRightPred), flipud(yRange)];
         verts = [v1; v2];
         
-        % Ensure polygon does not self-intersect (simple X check)
-        % If xLeft is ever > xRight, we have a crossover problem
         if all(xLeftPred < xRightPred)
-             outputFrame = insertShape(outputFrame, 'FilledPolygon', verts(:)', ...
-            'Color', 'green', 'Opacity', 0.4);
+            % Correct interleaving for insertShape: [x1, y1, x2, y2 ...]
+            xPoly = verts(:,1);
+            yPoly = verts(:,2);
+            polyInterleaved = [xPoly'; yPoly']; 
+            
+            outputFrame = insertShape(outputFrame, 'FilledPolygon', polyInterleaved(:)', ...
+                'Color', 'green', 'Opacity', 0.4);
         end
         
         outputFrame = insertShape(outputFrame, 'Line', [xLeftPred yRange], ...
