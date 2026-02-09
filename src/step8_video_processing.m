@@ -17,12 +17,12 @@ frameCount = 0;
 startTime = tic;
 
 %% Stability and smoothing settings
-alpha = 0.8;              % EMA for polynomial coefficients (more smoothing)
-alphaWidth = 0.9;         % EMA for lane width (more smoothing)
-MAX_LOST = 15;            % Frames to keep last good lanes
-MIN_PTS = 30;             % Minimum points to accept a fit
-MIN_YSPAN = 0.2;          % Minimum vertical span (ratio of image height)
-MAX_JUMP_PX = 80;         % Max average jump vs last good curve
+alpha = 0.85;             % EMA for polynomial coefficients (stronger smoothing)
+alphaWidth = 0.92;        % EMA for lane width (stronger smoothing)
+MAX_LOST = 20;            % Frames to keep last good lanes (increased)
+MIN_PTS = 20;             % Minimum points to accept a fit (relaxed)
+MIN_YSPAN = 0.15;         % Minimum vertical span (relaxed)
+MAX_JUMP_PX = 120;        % Max average jump vs last good curve (relaxed for curves)
 
 avgPolyL = [];
 avgPolyR = [];
@@ -39,24 +39,45 @@ while hasFrame(videoObj)
     frame = readFrame(videoObj);
     frame = imgaussfilt3(frame);
 
-    %% Color masking
-    yellowMask = (frame(:,:,1) >= 130 & frame(:,:,1) <= 255) & ...
-                 (frame(:,:,2) >= 130 & frame(:,:,2) <= 255) & ...
-                 (frame(:,:,3) >= 0   & frame(:,:,3) <= 130);
+    %% Adaptive brightness for thresholds
+    grayFrame = rgb2gray(frame);
+    meanLum = mean(grayFrame(:)) / 255;
+    meanLum = max(0.0, min(1.0, meanLum));
 
-    whiteMask = (frame(:,:,1) >= 200 & frame(:,:,1) <= 255) & ...
-                (frame(:,:,2) >= 200 & frame(:,:,2) <= 255) & ...
-                (frame(:,:,3) >= 200 & frame(:,:,3) <= 255);
+    whiteLo = round(170 + 50 * meanLum);
+    whiteLo = max(160, min(220, whiteLo));
+    yellowRLo = round(110 + 40 * meanLum);
+    yellowGLo = round(110 + 40 * meanLum);
+    yellowRLo = max(100, min(160, yellowRLo));
+    yellowGLo = max(100, min(160, yellowGLo));
+    yellowBHi = round(120 + 20 * (1 - meanLum));
+    yellowBHi = max(90, min(140, yellowBHi));
 
-    %% Edge detection
-    edgesYellow = edge(yellowMask, 'canny', 0.2);
-    edgesWhite = edge(whiteMask, 'canny', 0.2);
+    %% Color masking (adaptive thresholds)
+    yellowMask = (frame(:,:,1) >= yellowRLo & frame(:,:,1) <= 255) & ...
+                 (frame(:,:,2) >= yellowGLo & frame(:,:,2) <= 255) & ...
+                 (frame(:,:,3) >= 0         & frame(:,:,3) <= yellowBHi);
+
+    whiteMask = (frame(:,:,1) >= whiteLo & frame(:,:,1) <= 255) & ...
+                (frame(:,:,2) >= whiteLo & frame(:,:,2) <= 255) & ...
+                (frame(:,:,3) >= whiteLo & frame(:,:,3) <= 255);
+
+    %% Edge detection (adaptive threshold)
+    edgeThresh = 0.18 + 0.10 * (1 - meanLum);
+    edgeThresh = max(0.12, min(0.30, edgeThresh));
+    edgesYellow = edge(yellowMask, 'canny', edgeThresh);
+    edgesWhite = edge(whiteMask, 'canny', edgeThresh);
     edgesYellow = bwareaopen(edgesYellow, 15);
     edgesWhite = bwareaopen(edgesWhite, 15);
 
-    %% ROI extraction
+    %% ROI extraction (adaptive top and margins)
     [imHeight, imWidth] = size(edgesYellow);
-    roiVertices = [200, 315; imWidth-200, 315; imWidth-50, imHeight; 50, imHeight];
+    roiTopRatio = 0.45 + 0.15 * (1 - meanLum);
+    roiTopRatio = max(0.45, min(0.65, roiTopRatio));
+    roiTop = round(imHeight * roiTopRatio);
+    sideMargin = round(imWidth * 0.08);
+    bottomMargin = round(imWidth * 0.04);
+    roiVertices = [sideMargin, roiTop; imWidth-sideMargin, roiTop; imWidth-bottomMargin, imHeight; bottomMargin, imHeight];
     roiMask = poly2mask(roiVertices(:,1), roiVertices(:,2), imHeight, imWidth);
     roiYellow = edgesYellow & roiMask;
     roiWhite = edgesWhite & roiMask;
@@ -290,7 +311,9 @@ while hasFrame(videoObj)
         v2 = [flipud(xRightPred), flipud(yRange)];
         verts = [v1; v2];
 
-        if all(xLeftPred < xRightPred)
+        % Allow up to 10% crossing points for curve stability
+        validPoints = sum(xLeftPred < xRightPred);
+        if validPoints >= 0.9 * length(xLeftPred)
             xPoly = verts(:,1);
             yPoly = verts(:,2);
             polyInterleaved = [xPoly'; yPoly'];
