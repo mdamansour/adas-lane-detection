@@ -1,4 +1,4 @@
-%% Clear workspace and command window
+%% Step 8: Full video processing with stability refinements
 clear; clc; close all;
 
 %% Input/Output setup
@@ -16,13 +16,22 @@ fprintf('Output: %s\n', outputPath);
 frameCount = 0;
 startTime = tic;
 
-%% Temporal Smoothing State (Persistence)
+%% Stability and smoothing settings
+alpha = 0.8;              % EMA for polynomial coefficients (more smoothing)
+alphaWidth = 0.9;         % EMA for lane width (more smoothing)
+MAX_LOST = 15;            % Frames to keep last good lanes
+MIN_PTS = 30;             % Minimum points to accept a fit
+MIN_YSPAN = 0.2;          % Minimum vertical span (ratio of image height)
+MAX_JUMP_PX = 80;         % Max average jump vs last good curve
+
 avgPolyL = [];
 avgPolyR = [];
-alpha = 0.6; % Slightly faster adaptation (60% history, 40% new)
-lostL = 0;   
+lastGoodPolyL = [];
+lastGoodPolyR = [];
+lostL = 0;
 lostR = 0;
-MAX_LOST = 10; 
+
+avgLaneWidth = [];
 
 %% Frame loop
 while hasFrame(videoObj)
@@ -33,7 +42,7 @@ while hasFrame(videoObj)
     %% Color masking
     yellowMask = (frame(:,:,1) >= 130 & frame(:,:,1) <= 255) & ...
                  (frame(:,:,2) >= 130 & frame(:,:,2) <= 255) & ...
-                 (frame(:,:,3) >= 0 & frame(:,:,3) <= 130);
+                 (frame(:,:,3) >= 0   & frame(:,:,3) <= 130);
 
     whiteMask = (frame(:,:,1) >= 200 & frame(:,:,1) <= 255) & ...
                 (frame(:,:,2) >= 200 & frame(:,:,2) <= 255) & ...
@@ -95,108 +104,146 @@ while hasFrame(videoObj)
         end
     end
 
-    %% Polynomial fitting with Smoothing
+    %% Polynomial fitting with smoothing
     currPolyL = [];
     currPolyR = [];
-    
-    % --- Left Lane ---
-    if size(leftPoints, 1) >= 3
+
+    leftCount = size(leftPoints, 1);
+    rightCount = size(rightPoints, 1);
+    leftSpan = 0;
+    rightSpan = 0;
+    if leftCount > 1
+        leftSpan = max(leftPoints(:,2)) - min(leftPoints(:,2));
+    end
+    if rightCount > 1
+        rightSpan = max(rightPoints(:,2)) - min(rightPoints(:,2));
+    end
+    leftGood = leftCount >= MIN_PTS && leftSpan >= MIN_YSPAN * imHeight;
+    rightGood = rightCount >= MIN_PTS && rightSpan >= MIN_YSPAN * imHeight;
+
+    if leftGood && size(leftPoints, 1) >= 3
         currPolyL = polyfit(leftPoints(:,2), leftPoints(:,1), 2);
-    elseif size(leftPoints, 1) >= 2
+    elseif leftGood && size(leftPoints, 1) >= 2
         currPolyL = polyfit(leftPoints(:,2), leftPoints(:,1), 1);
     end
-    
-    if ~isempty(currPolyL)
-        if isempty(avgPolyL)
-            avgPolyL = currPolyL; % First detection
-        else
-             if length(currPolyL) < length(avgPolyL), currPolyL = [0 currPolyL]; end
-             if length(avgPolyL) < length(currPolyL), avgPolyL = [0 avgPolyL]; end
-             
-             % Apply EMA smoothing
-             avgPolyL = alpha * avgPolyL + (1 - alpha) * currPolyL;
+
+    if rightGood && size(rightPoints, 1) >= 3
+        currPolyR = polyfit(rightPoints(:,2), rightPoints(:,1), 2);
+    elseif rightGood && size(rightPoints, 1) >= 2
+        currPolyR = polyfit(rightPoints(:,2), rightPoints(:,1), 1);
+    end
+
+    % Normalize polynomial lengths for EMA
+    if ~isempty(currPolyL) || ~isempty(currPolyR)
+        if ~isempty(currPolyL) && length(currPolyL) == 2
+            currPolyL = [0 currPolyL];
         end
-        lostL = 0;
-    else
-        lostL = lostL + 1;
-        if lostL > MAX_LOST
-            avgPolyL = []; % Reset if lost for too long
+        if ~isempty(currPolyR) && length(currPolyR) == 2
+            currPolyR = [0 currPolyR];
         end
     end
 
-    % --- Right Lane ---
-    if size(rightPoints, 1) >= 3
-        currPolyR = polyfit(rightPoints(:,2), rightPoints(:,1), 2);
-    elseif size(rightPoints, 1) >= 2
-        currPolyR = polyfit(rightPoints(:,2), rightPoints(:,1), 1);
+    if ~isempty(currPolyL)
+        if ~isempty(lastGoodPolyL)
+            yCheck = [imHeight; round(imHeight * 0.7); round(imHeight * 0.55)];
+            xCurr = polyval(currPolyL, yCheck);
+            xPrev = polyval(lastGoodPolyL, yCheck);
+            if mean(abs(xCurr - xPrev)) > MAX_JUMP_PX
+                currPolyL = [];
+            end
+        end
     end
-    
+
+    if ~isempty(currPolyR)
+        if ~isempty(lastGoodPolyR)
+            yCheck = [imHeight; round(imHeight * 0.7); round(imHeight * 0.55)];
+            xCurr = polyval(currPolyR, yCheck);
+            xPrev = polyval(lastGoodPolyR, yCheck);
+            if mean(abs(xCurr - xPrev)) > MAX_JUMP_PX
+                currPolyR = [];
+            end
+        end
+    end
+
+    if ~isempty(currPolyL)
+        if isempty(avgPolyL)
+            avgPolyL = currPolyL;
+        else
+            avgPolyL = alpha * avgPolyL + (1 - alpha) * currPolyL;
+        end
+        lastGoodPolyL = avgPolyL;
+        lostL = 0;
+    else
+        lostL = lostL + 1;
+        if lostL <= MAX_LOST && ~isempty(lastGoodPolyL)
+            avgPolyL = lastGoodPolyL;
+        else
+            avgPolyL = [];
+        end
+    end
+
     if ~isempty(currPolyR)
         if isempty(avgPolyR)
-            avgPolyR = currPolyR; 
+            avgPolyR = currPolyR;
         else
-             if length(currPolyR) < length(avgPolyR), currPolyR = [0 currPolyR]; end
-             if length(avgPolyR) < length(currPolyR), avgPolyR = [0 avgPolyR]; end
-             
-             avgPolyR = alpha * avgPolyR + (1 - alpha) * currPolyR;
+            avgPolyR = alpha * avgPolyR + (1 - alpha) * currPolyR;
         end
+        lastGoodPolyR = avgPolyR;
         lostR = 0;
     else
         lostR = lostR + 1;
-        if lostR > MAX_LOST
+        if lostR <= MAX_LOST && ~isempty(lastGoodPolyR)
+            avgPolyR = lastGoodPolyR;
+        else
             avgPolyR = [];
         end
     end
 
-    %% Vanishing point and direction (Using Smoothed Polys)
+    %% Vanishing point and direction (smoothed polys)
     vanishingPoint = [];
     direction = 'Unknown';
     hasLeft = ~isempty(avgPolyL);
     hasRight = ~isempty(avgPolyR);
-    
+
     if hasLeft && hasRight
         pL = avgPolyL;
         pR = avgPolyR;
-        if length(pL) < 3, pL = [0 pL]; end
-        if length(pR) < 3, pR = [0 pR]; end
-        
         coeffs = pL - pR;
         rootsY = roots(coeffs);
         validRoots = rootsY(imag(rootsY) == 0 & rootsY > 0 & rootsY < imHeight);
-        
+
         if ~isempty(validRoots)
-            yHorizon = 320;
-            nearHorizon = validRoots(validRoots <= yHorizon);
-            if ~isempty(nearHorizon)
-                yV = min(nearHorizon);
-            else
-                yV = min(validRoots);
-            end
+            yV = min(validRoots);
             xV = polyval(pL, yV);
-            
+
             if xV > 0 && xV < imWidth
-                 vanishingPoint = [xV, yV];
-                 vanishingRatio = xV / imWidth;
-                 if vanishingRatio < 0.49
+                vanishingPoint = [xV, yV];
+                vanishingRatio = xV / imWidth;
+                if vanishingRatio < 0.49
                     direction = 'Turn Left';
-                 elseif vanishingRatio <= 0.51
+                elseif vanishingRatio <= 0.51
                     direction = 'Go Straight';
-                 else
+                else
                     direction = 'Turn Right';
-                 end
+                end
             end
         end
     end
 
-    %% Generate curves for display
-    yTop = 320;
+    %% Generate curves for display with stability guards
+    yTopBase = round(imHeight * 0.55);
+    yTopMin = round(imHeight * 0.45);
+    yTopMax = round(imHeight * 0.75);
+
+    yTop = yTopBase;
     if hasLeft && hasRight && ~isempty(vanishingPoint)
-        yTop = max(320, vanishingPoint(2));
+        yTop = min(max(vanishingPoint(2), yTopMin), yTopMax);
     end
+
     yRange = linspace(imHeight, yTop, 50)';
     xLeftPred = [];
     xRightPred = [];
-    
+
     if hasLeft
         xLeftPred = polyval(avgPolyL, yRange);
     end
@@ -204,24 +251,54 @@ while hasFrame(videoObj)
         xRightPred = polyval(avgPolyR, yRange);
     end
 
+    % Lane width sanity checks (prevents "mountains" and jumps)
+    if ~isempty(xLeftPred) && ~isempty(xRightPred)
+        widthBottom = xRightPred(1) - xLeftPred(1);
+        minWidth = 0.2 * imWidth;
+        maxWidth = 0.9 * imWidth;
+
+        if widthBottom >= minWidth && widthBottom <= maxWidth
+            if isempty(avgLaneWidth)
+                avgLaneWidth = widthBottom;
+            else
+                avgLaneWidth = alphaWidth * avgLaneWidth + (1 - alphaWidth) * widthBottom;
+            end
+        else
+            % Reject unstable width and fallback to last good polys
+            if ~isempty(lastGoodPolyL) && ~isempty(lastGoodPolyR)
+                xLeftPred = polyval(lastGoodPolyL, yRange);
+                xRightPred = polyval(lastGoodPolyR, yRange);
+            else
+                xLeftPred = [];
+                xRightPred = [];
+            end
+        end
+    elseif ~isempty(avgLaneWidth)
+        % If only one side is visible, synthesize the other side
+        if ~isempty(xLeftPred)
+            xRightPred = xLeftPred + avgLaneWidth;
+        elseif ~isempty(xRightPred)
+            xLeftPred = xRightPred - avgLaneWidth;
+        end
+    end
+
     %% Visualization overlay
     outputFrame = frame;
-    
+
     if ~isempty(xLeftPred) && ~isempty(xRightPred)
         v1 = [xLeftPred, yRange];
         v2 = [flipud(xRightPred), flipud(yRange)];
         verts = [v1; v2];
-        
+
         if all(xLeftPred < xRightPred)
-            % Correct interleaving for insertShape: [x1, y1, x2, y2 ...]
             xPoly = verts(:,1);
             yPoly = verts(:,2);
-            polyInterleaved = [xPoly'; yPoly']; 
-            
+            polyInterleaved = [xPoly'; yPoly'];
+
             outputFrame = insertShape(outputFrame, 'FilledPolygon', polyInterleaved(:)', ...
                 'Color', 'green', 'Opacity', 0.4);
         end
-        
+
         outputFrame = insertShape(outputFrame, 'Line', [xLeftPred yRange], ...
             'Color', 'yellow', 'LineWidth', 5);
         outputFrame = insertShape(outputFrame, 'Line', [xRightPred yRange], ...
