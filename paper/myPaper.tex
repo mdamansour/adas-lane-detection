@@ -1,101 +1,145 @@
+%% Technical Report - Vision-Based Lane Detection
 % Author: Mohammed Amansour
-% Institution: FST Fes
+% Institution: Faculty of Sciences and Technology, Fes
 
-\documentclass[conference]{IEEEtran}
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{graphicx}
-\usepackage{cite}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
 
-\title{Real-Time Vision-Based Lane Detection for Advanced Driver Assistance Systems}
+\geometry{top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm}
 
-\author{
-\IEEEauthorblockN{Mohammed Amansour}
-\IEEEauthorblockA{
+\title{\textbf{Real-Time Vision-Based Lane Detection for ADAS}\\
+\large Technical Report \& Implementation Guide}
+
+\author{Mohammed Amansour\\
 Faculty of Sciences and Technology, Fes\\
-Electrical Engineering and Embedded Systems\\
-Email: m@amansour.me}
-}
+Master in Electrical Engineering and Embedded Systems}
+
+\date{February 2026}
 
 \begin{document}
 
 \maketitle
 
 \begin{abstract}
-This paper presents a real-time lane detection algorithm for Advanced Driver Assistance Systems (ADAS) implemented using the MATLAB Automated Driving Toolbox. The proposed system employs Inverse Perspective Mapping (IPM) to transform front-facing camera images into a bird's-eye view representation, significantly simplifying lane boundary extraction. We demonstrate the algorithm's effectiveness on standard automotive datasets and discuss its suitability for embedded deployment on ISO 26262 compliant platforms.
+This report details the mathematical foundations, system architecture, and usage of the ADAS Lane Detection system. Developed in MATLAB R2025b, the system implements a pipeline for real-time lane tracking using illimunation-invariant HSV segmentation, Canny edge detection, and temporal ROI tracking. The report serves as a complete reference for the algorithmic design and future embedded deployment.
 \end{abstract}
 
+\tableofcontents
+\newpage
+
 \section{Introduction}
-Lane detection is a fundamental component of modern ADAS, enabling critical safety features such as Lane Departure Warning (LDW) and Lane Keep Assist (LKA). The challenge lies in robust detection under varying illumination conditions, road curvatures, and occlusions while maintaining real-time performance on resource-constrained embedded hardware.
+Lane detection is a critical perception task for Advanced Driver Assistance Systems (ADAS). This project provides a modular algorithm capable of detecting lane boundaries under varying lighting conditions (shadows, tunnels) and predicting vehicle turn direction (Left/Right/Straight).
 
-\section{System Model}
+The system prioritizes deterministic Computer Vision techniques over "black box" Deep Learning approaches to ensure explainability and efficiency on embedded hardware.
 
-\subsection{Camera Configuration}
-Our experimental setup utilizes a front-facing monocular camera mounted at the vehicle centerline with the following calibrated parameters:
+\section{System Architecture}
+The codebase is organized into three logical layers: Perception, Estimation, and Visualization.
+
+\subsection{File Structure \& Roles}
 \begin{itemize}
-    \item Focal length: $f_x = f_y = 1150$ pixels
-    \item Principal point: $(c_x, c_y) = (640, 360)$ pixels
-    \item Image resolution: $1280 \times 720$ pixels
-    \item Mounting height: $h = 1.5$ m above ground plane
-    \item Pitch angle: $\theta \approx 0^\circ$ (horizontal orientation)
+    \item \textbf{Core Logic:}
+    \begin{itemize}
+        \item \texttt{src/main\_process\_video.m}: The entry point. Loops through video frames and orchestrates the pipeline.
+    \end{itemize}
+    
+    \item \textbf{Perception Layer:}
+    \begin{itemize}
+        \item \texttt{getAdaptiveThresholds.m}: Computes dynamic luminance stats and HSV color thresholds.
+        \item \texttt{buildRoiEdges.m}: Performs Gaussian smoothing, HSV masking, Canny detection, and ROI cropping.
+        \item \texttt{detectHoughLines.m}: Extracts linear features from the edge map using the Hough Transform.
+    \end{itemize}
+    
+    \item \textbf{Estimation Layer:}
+    \begin{itemize}
+        \item \texttt{collectLanePoints.m}: Selects left/right candidates using geometry and tracking corridors.
+        \item \texttt{updateLaneState.m}: Fits polynomials and applies Exponential Moving Average (EMA) smoothing.
+        \item \texttt{computeVanishingPoint.m}: Calculates intersection of lane models for turn prediction.
+    \end{itemize}
+    
+    \item \textbf{Visualization:}
+    \begin{itemize}
+        \item \texttt{drawOverlay.m}: Renders lane polygons and HUD text.
+        \item \texttt{generateLaneCurves.m}: Generates smooth visualization points with horizon fading.
+    \end{itemize}
 \end{itemize}
 
-\subsection{Inverse Perspective Mapping (IPM)}
-The Inverse Perspective Mapping transformation addresses a fundamental challenge in lane detection: converging lane boundaries in the camera perspective appear as diverging lines due to perspective projection. By transforming the image to a bird's-eye view (top-down perspective), parallel lane markings in the world coordinate system are preserved as parallel lines in the transformed image space.
+\section{Mathematical Foundations}
 
-\subsubsection{Region of Interest Selection}
-We define a trapezoidal Region of Interest (ROI) in the image plane that isolates the road surface while excluding irrelevant regions (sky, horizon, vehicle hood). For the Udacity autonomous driving dataset at $1280 \times 720$ resolution, the ROI vertices are empirically determined as:
-
+\subsection{Preprocessing: Gaussian Smoothing}
+To suppress high-frequency sensor noise, a 3D Gaussian filter is applied:
 \begin{equation}
-\mathbf{P}_{\text{src}} = \begin{bmatrix}
-575 & 460 \\
-705 & 460 \\
-1100 & 720 \\
-200 & 720
-\end{bmatrix}
+G(x, y; \sigma) = \frac{1}{2\pi\sigma^2} \exp\left(-\frac{x^2 + y^2}{2\sigma^2}\right)
+\end{equation}
+This allows subsequent edge detectors to focus on significant structural boundaries rather than thermal noise or compression artifacts.
+
+\subsection{Perception: HSV Color Segmentation}
+Fixed RGB thresholds fail in shadows where intensity drops across all channels. We utilize the HSV (Hue, Saturation, Value) color space to decouple chromatic information from brightness.
+
+\textbf{Yellow Lane Detection:}
+Defined by Hue angle, which remains stable ($\sim 30^{\circ}-60^{\circ}$) even in deep shadow:
+\begin{equation}
+M_{\text{yellow}} = (H \in [0.08, 0.17]) \land (S \geq 0.4) \land (V \geq V_{\text{adaptive}})
 \end{equation}
 
-These coordinates represent the top-left, top-right, bottom-right, and bottom-left vertices respectively. The selection captures approximately 3-30 meters of look-ahead distance, balancing near-field accuracy with sufficient preview time for control algorithms.
-
-\subsubsection{Homography Transformation}
-The perspective transformation is realized through a planar homography matrix $\mathbf{H} \in \mathbb{R}^{3 \times 3}$ that maps points from the image plane to the bird's-eye view plane. Given the source ROI vertices $\mathbf{P}_{\text{src}}$ and corresponding destination rectangle:
-
+\textbf{White Lane Detection:}
+Defined by low saturation (achromatic) and high relative brightness:
 \begin{equation}
-\mathbf{P}_{\text{dst}} = \begin{bmatrix}
-300 & 0 \\
-900 & 0 \\
-900 & 720 \\
-300 & 720
-\end{bmatrix}
+M_{\text{white}} = (S \leq 0.25) \land (V \geq V_{\text{adaptive}})
 \end{equation}
 
-The homography $\mathbf{H}$ is computed using the Direct Linear Transformation (DLT) algorithm, which minimizes the reprojection error between corresponding point pairs. The transformation is applied pixel-wise using bilinear interpolation to generate the warped bird's-eye view image.
+The adaptive Value threshold $V_{\text{adaptive}}$ scales linearly with global frame luminance $\mu_L$ to handle exposure changes.
 
-\subsubsection{Implementation Framework}
-The IPM pipeline is implemented using MATLAB's Computer Vision Toolbox, specifically leveraging the \texttt{fitgeotrans} function for homography estimation and \texttt{imwarp} for efficient image warping. This approach provides:
+\subsection{Region of Interest (ROI) \& Horizon Clamp}
+The processing area is restricted to a trapezoid $\mathbf{V}_{\text{ROI}}$ capturing the road surface. Crucially, the top edge is clamped to the image midline ($y = 0.5H$) to prevent processing sky or distant terrain:
+\begin{equation}
+y_{\text{top}} = \max(0.5H, \text{Horizon}_{\text{estimated}})
+\end{equation}
+This "Horizon Clamp" eliminates false positives from tree lines or mountain ridges.
+
+\subsection{Estimation: ROI Tracking with Temporal Priors}
+To reject transient false positives (guardrails, adjacent cars), the system operates in two modes:
+
+\begin{enumerate}
+    \item \textbf{Acquisition Mode:} Global search for lane candidates (used in first frame or after track loss).
+    \item \textbf{Tracking Mode:} Search is restricted to a narrow corridor around the previous frame's polynomial model:
+\end{enumerate}
+
+\begin{equation}
+|x_i - \hat{x}_{t-1}(y_i)| < 50 \text{ pixels}
+\end{equation}
+
+Line segments are only accepted if $>60\%$ of their points fall within this corridor. This temporal regularization reduces susceptibility to outliers.
+
+\section{Usage Guide}
+
+\subsection{Prerequisites}
 \begin{itemize}
-    \item Computational efficiency suitable for real-time processing ($>30$ fps)
-    \item Robustness through well-tested numerical algorithms
-    \item Compatibility with MATLAB Coder for C++ code generation targeting embedded platforms
+    \item MATLAB R2024b/2025b
+    \item Computer Vision Toolbox
+    \item Automated Driving Toolbox
 \end{itemize}
 
-The resulting bird's-eye view representation maintains consistent spatial metrics, where pixel distances correspond to approximately constant real-world distances, facilitating subsequent lane polynomial fitting and curvature estimation.
+\subsection{Running the Algorithm}
+1. Place input video in \texttt{data/test\_drive.mp4}.
+2. Open MATLAB and navigate to the \texttt{src/} directory.
+3. Execute the main script:
+\begin{lstlisting}[language=Matlab]
+>> main_process_video
+\end{lstlisting}
+4. The output will be visualized in real-time windows and saved to \texttt{data/output\_annotated.avi}.
 
-\section{Lane Detection Algorithm}
-% To be populated with edge detection, Hough transform, or sliding window approach
-
-\section{Experimental Results}
-% To be populated with performance metrics and visualizations
-
-\section{Conclusion}
-We have presented an IPM-based lane detection framework optimized for ADAS applications. The system demonstrates the feasibility of real-time processing while maintaining accuracy suitable for safety-critical automotive functions.
-
-\begin{thebibliography}{1}
-\bibitem{adas1}
-J. McCall and M. Trivedi, ``Video-based lane estimation and tracking for driver assistance: Survey, system, and evaluation,'' \textit{IEEE Trans. Intelligent Transportation Systems}, vol. 7, no. 1, pp. 20-37, 2006.
-
-\bibitem{udacity}
-Udacity Self-Driving Car Engineers, ``Advanced Lane Finding Project,'' GitHub Repository, 2017.
-\end{thebibliography}
+\section{Future Work}
+\begin{itemize}
+    \item \textbf{Kalman Filter:} Replace the EMA smoother with a Kalman Filter to predict lane position during occlusions based on velocity/acceleration models.
+    \item \textbf{Curvature Estimation:} Calculate the quantitative radius of curvature to assess road tightnes ($R = [1+(y')^2]^{3/2} / |y''|$).
+    \item \textbf{Embedded C++ Port:} Use MATLAB Coder to generate C++ source for deployment on Raspberry Pi 5.
+\end{itemize}
 
 \end{document}

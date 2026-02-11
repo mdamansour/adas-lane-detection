@@ -7,13 +7,13 @@
 ---
 
 ## 📌 Project Overview
-This project implements a robust **Lane Departure Warning (LDW)** and **Lane Keep Assist (LKA)** system designed for automotive safety compliance. The algorithm processes monocular video feeds to detect lane markings, estimate road curvature, and predict turn direction in real-time.
+This project implements a **Lane Departure Warning (LDW)** and **Lane Keep Assist (LKA)** system designed for automotive safety applications. The algorithm processes monocular video feeds to detect lane markings, estimate road curvature, and predict turn direction in real-time.
 
-Built with **MATLAB R2025b**, the pipeline is modularized for **C++ code generation** (MATLAB Coder) to target embedded platforms like Raspberry Pi or NVIDIA Jetson, adhering to robust engineering standards.
+Built with **MATLAB R2025b**, the pipeline is modularized for **C++ code generation** (MATLAB Coder) to target embedded platforms like Raspberry Pi or NVIDIA Jetson.
 
 ### 🌟 Key Features
-*   **Illumination Invariance:** Uses **HSV Color Space** to detect lanes effectively in shadows, tunnels, and direct sunlight (94% accuracy in challenging light).
-*   **Robust Tracking:** Implements **ROI Tracking** with a "Search Corridor" ($\pm 50$ px) to reject false positives like guardrails or adjacent vehicles.
+*   **Illumination Invariance:** Uses **HSV Color Space** to detect lanes in shadows, tunnels, and direct sunlight (94% accuracy in challenging light).
+*   **Temporal Tracking:** Implements **ROI Tracking** with a "Search Corridor" ($\pm 50$ px) to reject false positives like guardrails or adjacent vehicles.
 *   **Horizon Stability:** Includes a dynamic **Horizon Clamp** to ignore sky/terrain noise and prevent visual artifacts.
 *   **Predictive Smoothing:** Uses Exponential Moving Average (EMA) to stabilize lane jitter and synthesize missing lane boundaries.
 
@@ -24,7 +24,7 @@ Built with **MATLAB R2025b**, the pipeline is modularized for **C++ code generat
 | **1. Original & Preprocessing** | **2. HSV Color Masks** |
 |:---:|:---:|
 | <img src="docs/pipeline_images/02_gaussian_blur.jpg" width="400"> | <img src="docs/pipeline_images/03_hsv_masks.jpg" width="400"> |
-| **Gaussian filtered** to reduce sensor noise | **Yellow/White segmentation** (Robust to lighting) |
+| **Gaussian filtered** to reduce sensor noise | **Yellow/White segmentation** (Effective in variable lighting) |
 
 | **3. Canny Edges & ROI** | **4. Hough Transform** |
 |:---:|:---:|
