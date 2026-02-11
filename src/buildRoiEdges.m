@@ -1,16 +1,22 @@
 function [roiYellow, roiWhite, imHeight, imWidth, midX] = buildRoiEdges(frame, thresholds)
 % BUILDROIEDGES Extracts edges within a region of interest
-%   Applies color masking, Canny edge detection, and ROI masking.
+%   Applies HSV-based color masking, Canny edge detection, and ROI masking.
+%   HSV provides illumination invariance for robust detection in shadows/tunnels.
 
-    % Create Yellow HSV/RGB Mask
-    yellowMask = (frame(:,:,1) >= thresholds.yellowRLo & frame(:,:,1) <= 255) & ...
-                 (frame(:,:,2) >= thresholds.yellowGLo & frame(:,:,2) <= 255) & ...
-                 (frame(:,:,3) >= 0 & frame(:,:,3) <= thresholds.yellowBHi);
+    % Convert to HSV color space
+    hsvFrame = rgb2hsv(frame);
+    H = hsvFrame(:,:,1);
+    S = hsvFrame(:,:,2);
+    V = hsvFrame(:,:,3);
 
-    % Create White RGB Mask
-    whiteMask = (frame(:,:,1) >= thresholds.whiteLo & frame(:,:,1) <= 255) & ...
-                (frame(:,:,2) >= thresholds.whiteLo & frame(:,:,2) <= 255) & ...
-                (frame(:,:,3) >= thresholds.whiteLo & frame(:,:,3) <= 255);
+    % Yellow Mask (HSV): Hue in yellow range + sufficient saturation + adaptive value
+    yellowMask = (H >= thresholds.yellowHueLo & H <= thresholds.yellowHueHi) & ...
+                 (S >= thresholds.yellowSatLo) & ...
+                 (V >= thresholds.yellowValLo);
+
+    % White Mask (HSV): Low saturation (grayscale) + high value
+    whiteMask = (S <= thresholds.whiteSatHi) & ...
+                (V >= thresholds.whiteValLo);
 
     % Edge Detection (Canny)
     edgesYellow = edge(yellowMask, 'canny', thresholds.edgeThresh);
