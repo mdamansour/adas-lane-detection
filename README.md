@@ -1,80 +1,89 @@
 # Real-Time Vision-Based Lane Detection for ADAS
 
 **Author:** Mohammed Amansour  
-**Institution:** FST Fes (Master in Electrical Engineering and Embedded Systems)  
-**Status:** In Development
+**Institution:** Faculty of Sciences & Technology (FST) Fes  
+**Focus:** Advanced Driver Assistance Systems (ADAS) | Embedded Computer Vision  
+
+---
 
 ## 📌 Project Overview
-This repository implements a **Lane Departure Warning (LDW)** and **Lane Keep Assist (LKA)** pipeline using MATLAB Computer Vision. The complete pipeline is orchestrated by [src/main_process_video.m](src/main_process_video.m), which utilizes modular functions to process the video and generate an annotated output.
+This project implements a robust **Lane Departure Warning (LDW)** and **Lane Keep Assist (LKA)** system designed for automotive safety compliance. The algorithm processes monocular video feeds to detect lane markings, estimate road curvature, and predict turn direction in real-time.
 
-The project targets deployment on embedded platforms (Raspberry Pi / NVIDIA Jetson) to demonstrate **Hardware-in-the-Loop (HIL)** capabilities relevant to the automotive industry (ISO 26262 compliance).
+Built with **MATLAB R2025b**, the pipeline is modularized for **C++ code generation** (MATLAB Coder) to target embedded platforms like Raspberry Pi or NVIDIA Jetson, adhering to robust engineering standards.
 
-## 🛠️ Technical Stack
-* **Platform:** MATLAB R2025b & Simulink
-* **Toolboxes:** 
-    * Automated Driving Toolbox
-    * Computer Vision Toolbox
-    * MATLAB Coder (for C++ generation)
-    * Embedded Coder
+### 🌟 Key Features
+*   **Illumination Invariance:** Uses **HSV Color Space** to detect lanes effectively in shadows, tunnels, and direct sunlight (94% accuracy in challenging light).
+*   **Robust Tracking:** Implements **ROI Tracking** with a "Search Corridor" ($\pm 50$ px) to reject false positives like guardrails or adjacent vehicles.
+*   **Horizon Stability:** Includes a dynamic **Horizon Clamp** to ignore sky/terrain noise and prevent visual artifacts.
+*   **Predictive Smoothing:** Uses Exponential Moving Average (EMA) to stabilize lane jitter and synthesize missing lane boundaries.
 
-## 📂 Repository Structure
+---
 
-The codebase is modularized to support unit testing and C++ code generation.
+## 📸 Visual Pipeline
 
-### **1. Entry Point**
-* `src/main_process_video.m`: Orchestrates the complete pipeline loop (Load -> Process -> Write).
-
-### **2. Configuration & State**
-* `src/getLaneDetectionParams.m`: Centralized tuning parameters (Alpha, MinPts, etc.).
-* `src/initLaneState.m`: Initializes tracking memory (history, dropped frame counts).
-* `src/setupVideoIO.m`: Handles video file paths and writer initialization.
-
-### **3. Perception Layer (Image Processing)**
-* `src/getAdaptiveThresholds.m`: Calculates dynamic luminance-based thresholds.
-* `src/buildRoiEdges.m`: Applies color masking, Canny edge detection, and ROI polygon.
-* `src/detectHoughLines.m`: Wraps Hough Transform to find candidate line segments.
-* `src/collectLanePoints.m`: Geometric filtering to associate lines with Left/Right lanes.
-
-### **4. Estimation Layer (Tracking & Math)**
-* `src/updateLaneState.m`: Polynomial fitting, outlier rejection, and temporal smoothing (EMA).
-* `src/computeVanishingPoint.m`: Solves for lane intersection to estimate road curvature direction.
-* `src/generateLaneCurves.m`: Evaluates polynomials and handles single-lane synthesis/width constraints.
-
-### **5. Visualization**
-* `src/drawOverlay.m`: Renders lane polygons, boundary lines, and HUD text onto the frame.
-
-## 📁 Data Assets
-* `data/`: Test input video and annotated output.
-* `docs/`: Technical references and requirements.
-
-## ✅ Pipeline Stages
-1. **HSV color segmentation** for yellow/white lanes (illumination-invariant)
-2. Canny edge detection with noise cleanup
-3. **ROI masking** with Horizon Clamp ($y > 0.5H$) to isolate road
-4. Hough transform for line candidates
-5. **ROI Tracking** mode (±50px corridor suppresses false positives)
-6. Polynomial lane fitting and temporal smoothing (EMA)
-7. Lane width stabilization and single-side synthesis
-8. Vanishing point turn prediction
-9. Video output with **Natural Fade** overlay (polygon tip truncation)
-
-## � Visual Pipeline
 | **1. Original & Preprocessing** | **2. HSV Color Masks** |
 |:---:|:---:|
 | <img src="docs/pipeline_images/02_gaussian_blur.jpg" width="400"> | <img src="docs/pipeline_images/03_hsv_masks.jpg" width="400"> |
-| **Gaussian filtered** to reduce noise | **Yellow/White segmentation** (Robust to shadows) |
+| **Gaussian filtered** to reduce sensor noise | **Yellow/White segmentation** (Robust to lighting) |
 
 | **3. Canny Edges & ROI** | **4. Hough Transform** |
 |:---:|:---:|
 | <img src="docs/pipeline_images/04_canny_roi.jpg" width="400"> | <img src="docs/pipeline_images/05_hough_lines.jpg" width="400"> |
-| **Edge detection** within ROI polygon | **Line candidates** detected via Hough |
+| **Edge detection** within dynamic ROI polygon | **Line candidates** detected via Hough |
 
 | **5. Final Output** |
 |:---:|
 | <img src="docs/pipeline_images/06_final_result.jpg" width="600"> |
 | **Annotated Frame:** Lane Polygon + Turn Prediction |
 
-## �🚀 Phase 2 Enhancements (Completed)
-- **ROI Tracking:** Temporal regularization eliminates ~90% of false positives by restricting search to ±50px corridor around previous frame's polynomial model.
-- **HSV Color Space:** Upgraded from RGB to HSV for illumination invariance. Provides 94% detection in shadows vs 65% with RGB thresholding.
-- **Horizon Clamp:** Locked detection horizon to image midline ($0.5H$) to reject sky/mountain noise. Implemented polygon truncation to prevent lanes from meeting at an artificial point in the sky.
+---
+
+## 🚀 Quick Start
+
+1.  **Requirements:** MATLAB R2024b/2025b with _Computer Vision Toolbox_ and _Automated Driving Toolbox_.
+2.  **Input Data:** Place your test video in `data/test_drive.mp4`.
+3.  **Run:**
+    ```matlab
+    % Inside the src/ directory
+    main_process_video
+    ```
+4.  **Output:** The annotated result will be saved to `data/output_annotated.avi`.
+
+---
+
+## 📂 Project Structure
+
+The codebase is organized into **logical layers** to separate perception, estimation, and visualization.
+
+### **1. Core Logic (Entry Point)**
+*   [`src/main_process_video.m`](src/main_process_video.m): The master script. Loops through video frames, orchestrates the inputs/outputs of all other functions, and manages system state.
+
+### **2. Perception Layer (Reading the World)**
+*   [`src/getAdaptiveThresholds.m`](src/getAdaptiveThresholds.m): Calculates dynamic thresholds based on scene brightness (Luminance) and defines HSV color ranges.
+*   [`src/buildRoiEdges.m`](src/buildRoiEdges.m): The "EYE" of the system. Converts to HSV, masks yellow/white colors, applies Canny edge detection, and crops to the road ROI.
+*   [`src/detectHoughLines.m`](src/detectHoughLines.m): Uses the Hough Transform to find mathematical lines from the edge image.
+
+### **3. Estimation Layer (Understanding the Lane)**
+*   [`src/collectLanePoints.m`](src/collectLanePoints.m): **Smart Selector.** Decides which lines are "Left Lane" vs "Right Lane" using geometry and ROI Tracking corridors.
+*   [`src/updateLaneState.m`](src/updateLaneState.m): **The Tracker.** Fits quadratic polynomials ($ax^2 + bx + c$) to points and applies temporal smoothing (EMA) to prevent jitter.
+*   [`src/computeVanishingPoint.m`](src/computeVanishingPoint.m): Calculates where lanes meet to determine if the road turns Left, Right, or Straight.
+
+### **4. Visualization Layer (Feedback)**
+*   [`src/drawOverlay.m`](src/drawOverlay.m): Renders the green lane polygon, yellow boundaries, and HUD text.
+*   [`src/generateLaneCurves.m`](src/generateLaneCurves.m): Prepares the polygon points for drawing, ensuring they fade naturally at the horizon.
+
+---
+
+## ⚙️ Algorithm Pipeline (Step-by-Step)
+
+1.  **Gaussian Smoothing:** Soften high-frequency noise from the camera sensor.
+2.  **HSV Segmentation:** Isolate Yellow (Hue 30-60°) and White (Low Saturation) pixels.
+3.  **Edge Detection:** Apply Canny operator to find boundaries.
+4.  **ROI Masking:** Crop to the road surface, ignoring sky ($y < 0.5H$) and periphery.
+5.  **Hough Transform:** Identify straight line segments in the edge map.
+6.  **Candidate Selection:**
+    *   *Acquisition Mode:* Find lines based on slope and position.
+    *   *Tracking Mode:* Keep lines only within $\pm 50$ px of previous lane.
+7.  **Curve Fitting:** Fit $2^{nd}$ order polynomial to valid points.
+8.  **Temporal Smoothing:** Update state using $New = \alpha \cdot Old + (1-\alpha) \cdot Detection$.
+9.  **Visualization:** Project lane model back onto the original frame.
