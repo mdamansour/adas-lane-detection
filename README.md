@@ -31,10 +31,15 @@ Built with **MATLAB R2025b**, the pipeline is modularized for **C++ code generat
 | <img src="docs/pipeline_images/04_canny_roi.jpg" width="400"> | <img src="docs/pipeline_images/05_hough_lines.jpg" width="400"> |
 | **Edge detection** within dynamic ROI polygon | **Line candidates** detected via Hough |
 
-| **5. Final Output** |
-|:---:|
-| <img src="docs/pipeline_images/06_final_result.jpg" width="600"> |
-| **Annotated Frame:** Lane Polygon + Turn Prediction |
+<div align="center">
+
+**5. Final Output**
+
+<img src="docs/pipeline_images/06_final_result.jpg" width="600">
+
+**Annotated Frame:** Lane Polygon + Turn Prediction
+
+</div>
 
 ---
 
