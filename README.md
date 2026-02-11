@@ -1,7 +1,8 @@
 # Real-Time Vision-Based Lane Detection for ADAS
 
 **Author:** Mohammed Amansour  
-**Institution:** Faculty of Sciences & Technology (FST) Fes  
+**Institution:** Sidi Mohamed Ben Abdellah University, Fes  
+**Contact:** [m@amansour.me](mailto:m@amansour.me) | [LinkedIn](https://www.linkedin.com/in/mdamansour/)  
 **Focus:** Advanced Driver Assistance Systems (ADAS) | Embedded Computer Vision  
 
 ---
@@ -88,3 +89,18 @@ The codebase is organized into **logical layers** to separate perception, estima
 7.  **Curve Fitting:** Fit $2^{nd}$ order polynomial to valid points.
 8.  **Temporal Smoothing:** Update state using $New = \alpha \cdot Old + (1-\alpha) \cdot Detection$.
 9.  **Visualization:** Project lane model back onto the original frame.
+
+---
+
+## 👤 Author
+
+**Mohammed Amansour**  
+Master's Student in Electrical Engineering and Embedded Systems  
+Sidi Mohamed Ben Abdellah University, Fes
+
+📧 Email: [m@amansour.me](mailto:m@amansour.me)  
+💼 LinkedIn: [linkedin.com/in/mdamansour](https://www.linkedin.com/in/mdamansour/)
+
+---
+
+© 2026 Mohammed Amansour. This project is licensed for educational and research purposes.
