@@ -72,50 +72,84 @@ The codebase is organized into three logical layers: Perception, Estimation, and
 
 \section{Mathematical Foundations}
 
+This section details the algorithmic operations performed at each stage of the pipeline, explaining not just the equations but the data transformations (Input $\rightarrow$ Output) and the engineering rationale behind them.
+
 \subsection{Preprocessing: Gaussian Smoothing}
-To suppress high-frequency sensor noise, a 3D Gaussian filter is applied:
+Raw video frames from automotive cameras contain high-frequency noise caused by sensor thermodynamics and compression artifacts. If left untreated, these single-pixel intensity spikes create false edges.
+
+\textbf{Operation:}
+We apply a Gaussian filter, which is a mathematical convolution of the image $I$ with a kernel $G$. For a pixel at $(x,y)$, the new intensity is a weighted average of its neighbors, where weights fall off according to a bell curve:
 \begin{equation}
 G(x, y; \sigma) = \frac{1}{2\pi\sigma^2} \exp\left(-\frac{x^2 + y^2}{2\sigma^2}\right)
 \end{equation}
-This allows subsequent edge detectors to focus on significant structural boundaries rather than thermal noise or compression artifacts.
+
+\begin{itemize}
+    \item \textbf{Input:} Raw $H \times W \times 3$ RGB frame.
+    \item \textbf{Output:} Smoothed RGB frame with preserved edges but suppressed noise.
+    \item \textbf{Effect:} The standard deviation $\sigma$ controls the blur amount. We use 3D filtering to smooth channels independently, preparing the image for gradient detection.
+\end{itemize}
 
 \subsection{Perception: HSV Color Segmentation}
-Fixed RGB thresholds fail in shadows where intensity drops across all channels. We utilize the HSV (Hue, Saturation, Value) color space to decouple chromatic information from brightness.
+Standard RGB thresholding is sensitive to illumination changes because a shadow reduces $R$, $G$, and $B$ values simultaneously. To detect lanes consistently, we transform the image into HSV (Hue, Saturation, Value) space.
 
-\textbf{Yellow Lane Detection:}
-Defined by Hue angle, which remains stable ($\sim 30^{\circ}-60^{\circ}$) even in deep shadow:
+\begin{itemize}
+    \item \textbf{Hue (H):} The "color" angle (e.g., Yellow is $\sim 60^\circ$). Invariant to lighting.
+    \item \textbf{Saturation (S):} The purity of color vs. white/gray.
+    \item \textbf{Value (V):} The brightness intensity.
+\end{itemize}
+
+\textbf{Logic for Yellow Lanes:}
+We define yellow not by its RGB mix, but by its position on the color wheel. A pixel is classified as yellow lane marking if:
+1. \textbf{Hue Check:} $0.08 \le H \le 0.17$ (Correponds to yellow-orange spectrum).
+2. \textbf{Saturation Check:} $S \ge 0.4$ (Must be vivid, not washed out).
+3. \textbf{Value Check:} $V \ge V_{\text{adaptive}}$ (Must be brighter than the road shadow).
+
+\textbf{Logic for White Lanes:}
+White is achromatic. A pixel is white lane marking if:
+1. \textbf{Saturation Check:} $S \le 0.25$ (Low color content).
+2. \textbf{Value Check:} $V \ge V_{\text{adaptive}}$ (High brightness).
+
 \begin{equation}
-M_{\text{yellow}} = (H \in [0.08, 0.17]) \land (S \geq 0.4) \land (V \geq V_{\text{adaptive}})
+Input: HSV Image \rightarrow Output: Binary Mask (1=Lane, 0=Background)
 \end{equation}
-
-\textbf{White Lane Detection:}
-Defined by low saturation (achromatic) and high relative brightness:
-\begin{equation}
-M_{\text{white}} = (S \leq 0.25) \land (V \geq V_{\text{adaptive}})
-\end{equation}
-
-The adaptive Value threshold $V_{\text{adaptive}}$ scales linearly with global frame luminance $\mu_L$ to handle exposure changes.
 
 \subsection{Region of Interest (ROI) \& Horizon Clamp}
-The processing area is restricted to a trapezoid $\mathbf{V}_{\text{ROI}}$ capturing the road surface. Crucially, the top edge is clamped to the image midline ($y = 0.5H$) to prevent processing sky or distant terrain:
+Processing the entire image includes the sky, trees, and other vehicles, which generates false edges. We apply a spatial mask to isolate the road surface.
+
+\textbf{Geometric Definition:}
+The ROI is a trapezoid defined by four vertices $\mathbf{V}_{\text{ROI}}$: bottom-left, bottom-right, top-right, and top-left.
+To avoid detecting the horizon or sky (which creates strong horizontal edges), we enforce a "Horizon Clamp":
 \begin{equation}
-y_{\text{top}} = \max(0.5H, \text{Horizon}_{\text{estimated}})
+y_{\text{top}} = \max(0.5 \times \text{ImageHeight}, \text{EstimatedHorizon})
 \end{equation}
-This "Horizon Clamp" eliminates false positives from tree lines or mountain ridges.
+Any pixel above the midline ($y < 0.5H$) is strictly ignored.
+
+\begin{itemize}
+    \item \textbf{Input:} Edge map from Canny detector.
+    \item \textbf{Output:} Masked edge map where only road features remain.
+\end{itemize}
 
 \subsection{Estimation: ROI Tracking with Temporal Priors}
-To reject transient false positives (guardrails, adjacent cars), the system operates in two modes:
+Searching for lanes across the entire image in every frame is inefficient and prone to errors (e.g., locking onto a guardrail). Once a lane is found, we assume it will not move significantly in the next frame ($\sim 33$ms).
 
-\begin{enumerate}
-    \item \textbf{Acquisition Mode:} Global search for lane candidates (used in first frame or after track loss).
-    \item \textbf{Tracking Mode:} Search is restricted to a narrow corridor around the previous frame's polynomial model:
-\end{enumerate}
-
+\textbf{Tracking Logic:}
+Let $\hat{x}_{t-1}(y)$ be the polynomial curve of the lane from the previous frame. For a new candidate point $(x_i, y_i)$ detected in the current frame, we calculate its horizontal distance to the expected lane position:
 \begin{equation}
-|x_i - \hat{x}_{t-1}(y_i)| < 50 \text{ pixels}
+d = |x_i - \hat{x}_{t-1}(y_i)|
 \end{equation}
 
-Line segments are only accepted if $>60\%$ of their points fall within this corridor. This temporal regularization reduces susceptibility to outliers.
+We impose a strict condition:
+\begin{equation}
+\text{Keep Point if } d < 50 \text{ pixels}
+\end{equation}
+
+This creates a "Search Corridor." Points outside this corridor are discarded as noise.
+
+\begin{itemize}
+    \item \textbf{Input:} Set of all candidate line points.
+    \item \textbf{Output:} Filtered subset of points belonging to the actual lane.
+    \item \textbf{Result:} Prevents the tracker from jumping to adjacent vehicles or shadows.
+\end{itemize}
 
 \section{Usage Guide}
 
@@ -134,12 +168,5 @@ Line segments are only accepted if $>60\%$ of their points fall within this corr
 >> main_process_video
 \end{lstlisting}
 4. The output will be visualized in real-time windows and saved to \texttt{data/output\_annotated.avi}.
-
-\section{Future Work}
-\begin{itemize}
-    \item \textbf{Kalman Filter:} Replace the EMA smoother with a Kalman Filter to predict lane position during occlusions based on velocity/acceleration models.
-    \item \textbf{Curvature Estimation:} Calculate the quantitative radius of curvature to assess road tightnes ($R = [1+(y')^2]^{3/2} / |y''|$).
-    \item \textbf{Embedded C++ Port:} Use MATLAB Coder to generate C++ source for deployment on Raspberry Pi 5.
-\end{itemize}
 
 \end{document}
