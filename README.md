@@ -50,14 +50,15 @@ The codebase is modularized to support unit testing and C++ code generation.
 ## ✅ Pipeline Stages
 1. **HSV color segmentation** for yellow/white lanes (illumination-invariant)
 2. Canny edge detection with noise cleanup
-3. ROI masking to isolate road region
+3. **ROI masking** with Horizon Clamp ($y > 0.5H$) to isolate road
 4. Hough transform for line candidates
 5. **ROI Tracking** mode (±50px corridor suppresses false positives)
 6. Polynomial lane fitting and temporal smoothing (EMA)
 7. Lane width stabilization and single-side synthesis
 8. Vanishing point turn prediction
-9. Video output with lane overlay
+9. Video output with **Natural Fade** overlay (polygon tip truncation)
 
 ## 🚀 Phase 2 Enhancements (Completed)
 - **ROI Tracking:** Temporal regularization eliminates ~90% of false positives by restricting search to ±50px corridor around previous frame's polynomial model.
 - **HSV Color Space:** Upgraded from RGB to HSV for illumination invariance. Provides 94% detection in shadows vs 65% with RGB thresholding.
+- **Horizon Clamp:** Locked detection horizon to image midline ($0.5H$) to reject sky/mountain noise. Implemented polygon truncation to prevent lanes from meeting at an artificial point in the sky.
