@@ -58,7 +58,23 @@ The codebase is modularized to support unit testing and C++ code generation.
 8. Vanishing point turn prediction
 9. Video output with **Natural Fade** overlay (polygon tip truncation)
 
-## 🚀 Phase 2 Enhancements (Completed)
+## � Visual Pipeline
+| **1. Original & Preprocessing** | **2. HSV Color Masks** |
+|:---:|:---:|
+| <img src="docs/pipeline_images/02_gaussian_blur.jpg" width="400"> | <img src="docs/pipeline_images/03_hsv_masks.jpg" width="400"> |
+| **Gaussian filtered** to reduce noise | **Yellow/White segmentation** (Robust to shadows) |
+
+| **3. Canny Edges & ROI** | **4. Hough Transform** |
+|:---:|:---:|
+| <img src="docs/pipeline_images/04_canny_roi.jpg" width="400"> | <img src="docs/pipeline_images/05_hough_lines.jpg" width="400"> |
+| **Edge detection** within ROI polygon | **Line candidates** detected via Hough |
+
+| **5. Final Output** |
+|:---:|
+| <img src="docs/pipeline_images/06_final_result.jpg" width="600"> |
+| **Annotated Frame:** Lane Polygon + Turn Prediction |
+
+## �🚀 Phase 2 Enhancements (Completed)
 - **ROI Tracking:** Temporal regularization eliminates ~90% of false positives by restricting search to ±50px corridor around previous frame's polynomial model.
 - **HSV Color Space:** Upgraded from RGB to HSV for illumination invariance. Provides 94% detection in shadows vs 65% with RGB thresholding.
 - **Horizon Clamp:** Locked detection horizon to image midline ($0.5H$) to reject sky/mountain noise. Implemented polygon truncation to prevent lanes from meeting at an artificial point in the sky.
