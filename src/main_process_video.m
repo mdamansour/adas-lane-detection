@@ -45,8 +45,8 @@ while hasFrame(videoObj)
     % C. Hough Transform
     linesAll = detectHoughLines(roiYellow, roiWhite);
     
-    % D. Lane Candidate Selection
-    [leftPoints, rightPoints] = collectLanePoints(linesAll, imHeight, imWidth, midX);
+    % D. Lane Candidate Selection (with ROI Tracking)
+    [leftPoints, rightPoints] = collectLanePoints(linesAll, imHeight, imWidth, midX, state.avgPolyL, state.avgPolyR);
     
     % E. State Update (PolyFit + Smoothing)
     state = updateLaneState(state, leftPoints, rightPoints, imHeight, params);

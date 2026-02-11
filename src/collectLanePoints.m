@@ -1,10 +1,15 @@
-function [leftPoints, rightPoints] = collectLanePoints(linesAll, imHeight, imWidth, midX)
+function [leftPoints, rightPoints] = collectLanePoints(linesAll, imHeight, imWidth, midX, prevPolyL, prevPolyR)
 % COLLECTLANEPOINTS Classifies Hough lines into Left/Right lane candidates
 %   Filters lines by slope and position, then samples points for fitting.
 %   Uses geometry to discern ego-lane from neighbors.
+%   Implements ROI Tracking: if previous polynomials exist, restrict search
+%   to ±50px corridor around them (eliminates false positives).
 
     leftPoints = [];
     rightPoints = [];
+    
+    TRACKING_CORRIDOR = 50;
+    trackingActive = ~isempty(prevPolyL) && ~isempty(prevPolyR);
 
     for k = 1:length(linesAll)
         p1 = linesAll(k).point1;
@@ -39,10 +44,28 @@ function [leftPoints, rightPoints] = collectLanePoints(linesAll, imHeight, imWid
             ySamp = linspace(p1(2), p2(2), numSamples)';
             pts = [xSamp, ySamp];
             
-            if validLeft
-                leftPoints = [leftPoints; pts];
+            % Tracking Mode: Check if points fall within corridor
+            if trackingActive
+                if validLeft
+                    xExpected = polyval(prevPolyL, pts(:,2));
+                    withinCorridor = abs(pts(:,1) - xExpected) < TRACKING_CORRIDOR;
+                    if sum(withinCorridor) / length(withinCorridor) > 0.6
+                        leftPoints = [leftPoints; pts(withinCorridor, :)];
+                    end
+                else
+                    xExpected = polyval(prevPolyR, pts(:,2));
+                    withinCorridor = abs(pts(:,1) - xExpected) < TRACKING_CORRIDOR;
+                    if sum(withinCorridor) / length(withinCorridor) > 0.6
+                        rightPoints = [rightPoints; pts(withinCorridor, :)];
+                    end
+                end
             else
-                rightPoints = [rightPoints; pts];
+                % Acquisition Mode: Accept all valid points
+                if validLeft
+                    leftPoints = [leftPoints; pts];
+                else
+                    rightPoints = [rightPoints; pts];
+                end
             end
         end
     end
