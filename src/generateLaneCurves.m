@@ -5,13 +5,16 @@ function [xLeftPred, xRightPred, yRange, state] = generateLaneCurves(state, imHe
 
     % Define vertical range for drawing
     yTopBase = round(imHeight * 0.55);
-    yTopMin = round(imHeight * 0.45);
+    yTopMin = round(imHeight * 0.50); % Strict horizon clamp to avoid sky (was 0.45)
     yTopMax = round(imHeight * 0.75);
 
     % Adjust draw height based on vanishing point
     yTop = yTopBase;
     if ~isempty(state.avgPolyL) && ~isempty(state.avgPolyR) && ~isempty(vanishingPoint)
-        yTop = min(max(vanishingPoint(2), yTopMin), yTopMax);
+        % Don't draw all the way to the intersection (pointy tip).
+        % Stop 15 pixels short for a natural "road interior" look.
+        vpLimit = vanishingPoint(2) + 15;
+        yTop = min(max(vpLimit, yTopMin), yTopMax);
     end
 
     yRange = linspace(imHeight, yTop, 50)';

@@ -26,8 +26,10 @@ function thresholds = getAdaptiveThresholds(frame)
     edgeThresh = 0.18 + 0.10 * (1 - meanLum);
     edgeThresh = max(0.12, min(0.30, edgeThresh));
 
-    roiTopRatio = 0.45 + 0.15 * (1 - meanLum);
-    roiTopRatio = max(0.45, min(0.65, roiTopRatio));
+    % ROI Horizon: Never look above the midline (0.50) to avoid sky noise
+    % Previously 0.45, which captured too much horizon/mountains
+    roiTopRatio = 0.50 + 0.15 * (1 - meanLum);
+    roiTopRatio = max(0.50, min(0.65, roiTopRatio));
 
     thresholds = struct(...
         'meanLum', meanLum, ...
