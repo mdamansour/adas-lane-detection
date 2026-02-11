@@ -18,9 +18,32 @@ The project targets deployment on embedded platforms (Raspberry Pi / NVIDIA Jets
     * Embedded Coder
 
 ## 📂 Repository Structure
-* `src/`: Modular MATLAB source code.
-    * `main_process_video.m`: Main entry point.
-    * `*.m`: Helper functions (Thresholding, Edge Detection, Hough, etc.).
+
+The codebase is modularized to support unit testing and C++ code generation.
+
+### **1. Entry Point**
+* `src/main_process_video.m`: Orchestrates the complete pipeline loop (Load -> Process -> Write).
+
+### **2. Configuration & State**
+* `src/getLaneDetectionParams.m`: Centralized tuning parameters (Alpha, MinPts, etc.).
+* `src/initLaneState.m`: Initializes tracking memory (history, dropped frame counts).
+* `src/setupVideoIO.m`: Handles video file paths and writer initialization.
+
+### **3. Perception Layer (Image Processing)**
+* `src/getAdaptiveThresholds.m`: Calculates dynamic luminance-based thresholds.
+* `src/buildRoiEdges.m`: Applies color masking, Canny edge detection, and ROI polygon.
+* `src/detectHoughLines.m`: Wraps Hough Transform to find candidate line segments.
+* `src/collectLanePoints.m`: Geometric filtering to associate lines with Left/Right lanes.
+
+### **4. Estimation Layer (Tracking & Math)**
+* `src/updateLaneState.m`: Polynomial fitting, outlier rejection, and temporal smoothing (EMA).
+* `src/computeVanishingPoint.m`: Solves for lane intersection to estimate road curvature direction.
+* `src/generateLaneCurves.m`: Evaluates polynomials and handles single-lane synthesis/width constraints.
+
+### **5. Visualization**
+* `src/drawOverlay.m`: Renders lane polygons, boundary lines, and HUD text onto the frame.
+
+## 📁 Data Assets
 * `data/`: Test input video and annotated output.
 * `docs/`: Technical references and requirements.
 
@@ -33,6 +56,3 @@ The project targets deployment on embedded platforms (Raspberry Pi / NVIDIA Jets
 6. Lane width stabilization and single-side synthesis
 7. Vanishing point turn prediction
 8. Video output with lane overlay
-
----
-*Research conducted for academic demonstration.*
